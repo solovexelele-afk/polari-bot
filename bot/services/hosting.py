@@ -51,7 +51,7 @@ class HostingService:
             workers = getattr(music, "workers", [])
             return web.json_response({
                 "status": "ok" if ready else "starting", "bot": str(self.bot.user or ""),
-                "ffmpeg": bool(ffmpeg_path()),
+                "ffmpeg": bool(ffmpeg_path()), "music_selftest": getattr(music, "selftest", "n/a"),
                 "music_workers": len(workers), "music_workers_ready": sum(1 for w in workers if w.is_ready()),
             })
 

@@ -59,6 +59,29 @@ class MusicCog(commands.Cog):
             self._tasks.append(asyncio.create_task(self._run_worker(worker, token)))
         if not ffmpeg_path():
             log.warning("ffmpeg не найден — музыка работать не будет.")
+        self.selftest: str = "pending"
+        self._tasks.append(asyncio.create_task(self._selftest()))
+
+    async def _selftest(self) -> None:
+        """Перекодирует 3 секунды радио тем же способом, что и плеер (stdin -> opus)."""
+        exe = ffmpeg_path()
+        if not exe:
+            self.selftest = "no ffmpeg"
+            return
+        try:
+            stream = await asyncio.to_thread(GuildPlayer._open, STATIONS[0].url)
+            data = await asyncio.to_thread(stream.read, 96_000)
+            stream.close()
+            proc = await asyncio.create_subprocess_exec(
+                exe, "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-t", "3", "-c:a", "libopus",
+                "-f", "ogg", "pipe:1", stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE)
+            out, err = await asyncio.wait_for(proc.communicate(data), timeout=30)
+            self.selftest = f"ok ({len(out)} bytes)" if proc.returncode == 0 and out else \
+                f"fail rc={proc.returncode} {err.decode(errors='ignore')[:200]}"
+        except Exception as exc:
+            self.selftest = f"error {exc!r}"[:200]
+        log.info("Самопроверка музыки: %s", self.selftest)
 
     async def _run_worker(self, worker: MusicWorker, token: str) -> None:
         try:
