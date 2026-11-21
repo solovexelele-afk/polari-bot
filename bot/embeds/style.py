@@ -87,11 +87,15 @@ def banner(key: str, color: int = Colors.SECONDARY) -> tuple[discord.Embed | Non
 async def send_panel(channel: discord.abc.Messageable, banner_key: str, embeds: list[discord.Embed],
                      view: discord.ui.View | None = None, content: str | None = None,
                      allowed_mentions: discord.AllowedMentions | None = None) -> discord.Message:
-    """Публикует панель: баннер + Embed'ы + компоненты одним сообщением."""
-    head, file = banner(banner_key, embeds[0].color.value if embeds and embeds[0].color else Colors.SECONDARY)
-    kwargs: dict = {"embeds": ([head] if head else []) + embeds}
-    if file:
-        kwargs["file"] = file
+    """Публикует панель одним сообщением: большой баннер-вложение сверху, под ним Embed'ы и кнопки.
+
+    Баннер прикладывается как обычное изображение (а не внутри Embed): Discord показывает его
+    на всю ширину сообщения прямо над Embed — как на TENDERLE.
+    """
+    path = BANNER_DIR / f"{banner_key}.png"
+    kwargs: dict = {"embeds": embeds}
+    if path.exists():
+        kwargs["file"] = discord.File(path, filename=f"{banner_key}.png")
     if view is not None:
         kwargs["view"] = view
     if content:

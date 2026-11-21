@@ -68,6 +68,28 @@ class TicketPanelView(discord.ui.View):
         self.add_item(TicketTypeSelect())
 
 
+class QuickTicketView(discord.ui.View):
+    """Кнопки быстрого открытия тикета в канале тех. поддержки."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Тех. поддержка", emoji="🛠️", style=discord.ButtonStyle.primary,
+                       custom_id="polari:tk:quick:support")
+    async def support(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(TicketModal("support"))
+
+    @discord.ui.button(label="Жалоба", emoji="⚠️", style=discord.ButtonStyle.secondary,
+                       custom_id="polari:tk:quick:complaint")
+    async def complaint(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(TicketModal("complaint"))
+
+    @discord.ui.button(label="Апелляция", emoji="⚖️", style=discord.ButtonStyle.secondary,
+                       custom_id="polari:tk:quick:appeal")
+    async def appeal(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(TicketModal("appeal"))
+
+
 class AddStaffSelect(discord.ui.UserSelect):
     def __init__(self):
         super().__init__(placeholder="Выберите сотрудника", min_values=1, max_values=1)
@@ -167,7 +189,46 @@ class TicketsCog(commands.Cog):
     async def cog_load(self) -> None:
         self.bot.add_view(TicketPanelView())
         self.bot.add_view(TicketControlView())
-        self.bot.get_cog("SetupCog").register_panel("tickets", self.post_panel)  # type: ignore[union-attr]
+        self.bot.add_view(QuickTicketView())
+        setup_cog = self.bot.get_cog("SetupCog")
+        setup_cog.register_panel("tickets", self.post_panel)  # type: ignore[union-attr]
+        setup_cog.register_panel("tech", self.post_tech)      # type: ignore[union-attr]
+        setup_cog.register_panel("faq", self.post_faq)        # type: ignore[union-attr]
+
+    async def post_tech(self, channel: discord.TextChannel) -> discord.Message:
+        embed = style.header("Техническая поддержка", (
+            "Что-то не работает? Сначала проверьте решения ниже — большинство проблем решается за минуту.\n"
+            f"{style.THIN}\n"
+            "**🔌 Discord не подключается / высокий пинг**\n"
+            "> Перезапустите Discord, отключите VPN или смените регион голосового канала.\n"
+            "**🎙️ Меня не слышно в голосовом**\n"
+            "> Настройки → Голос и видео → проверьте устройство ввода и режим активации.\n"
+            "**🔒 Не вижу каналы сервера**\n"
+            "> Пройдите голосовое собеседование в комнате **Ожидание** — доступ выдаётся после него.\n"
+            "**🤖 Кнопки бота не отвечают**\n"
+            "> Подождите минуту и повторите — бот мог перезапускаться.\n"
+            "**💎 Не выдалась купленная роль**\n"
+            "> Напишите в тикет своего заказа или откройте тикет «Покупка».\n"
+            f"{style.THIN}\n"
+            "Не помогло? Нажмите кнопку ниже — откроется приватный тикет с командой поддержки."),
+            style.Colors.PRIMARY)
+        return await style.send_panel(channel, "tickets", [embed], view=QuickTicketView())
+
+    async def post_faq(self, channel: discord.TextChannel) -> discord.Message:
+        embed = style.header("Частые вопросы", "Ответы на то, что спрашивают чаще всего.", style.Colors.SECONDARY)
+        for question, answer in (
+            ("Как получить доступ к серверу?", "Зайдите в комнату **Ожидание** в «Прихожей» и дождитесь "
+                                               "проверяющего. После короткого голосового собеседования доступ откроется."),
+            ("Почему собеседование голосовое?", "Так мы защищаем сервер от ботов, твинков и рейдов."),
+            ("Как купить роль?", "Откройте канал **магазин**, выберите товар и нажмите «Купить». "
+                                 "Оплата обсуждается только в приватном тикете заказа."),
+            ("Как пожаловаться на участника?", "Команда `/report` или тикет «Жалоба». Приложите доказательства."),
+            ("Как обжаловать наказание?", "Откройте тикет «Апелляция» — его рассмотрит администрация."),
+            ("Как попасть в команду?", "Наборы объявляются в новостях. Следите за анонсами."),
+            ("Как предложить идею?", "Команда `/suggest` — предложение попадёт в канал предложений."),
+        ):
+            embed.add_field(name=f"❓ {question}", value=answer, inline=False)
+        return await style.send_panel(channel, "memo", [embed])
 
     async def post_panel(self, channel: discord.TextChannel) -> discord.Message:
         lines = "\n".join(f"{t.emoji} **{t.label}** — {t.description}" for t in TICKET_TYPES)

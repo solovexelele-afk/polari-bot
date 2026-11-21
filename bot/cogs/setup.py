@@ -36,7 +36,7 @@ PanelBuilder = Callable[[discord.TextChannel], Awaitable[discord.Message]]
 PANEL_CHANNELS = {
     "info": "info", "memo": "memo", "rules": "rules", "shop": "shop",
     "tickets": "ticket_panel", "interview": "interview_panel", "staff_memo": "staff_memo",
-    "news": "news",
+    "news": "news", "tech": "tech_support", "faq": "faq",
 }
 
 
@@ -319,6 +319,17 @@ class SetupCog(commands.Cog):
             item.target = ch
             await reg.set(guild.id, f"channel.{item.key}", ch.id)
             await reg.set(guild.id, f"created.{ch.id}", "channel")
+            await asyncio.sleep(0.4)
+
+        # Порядок категорий как в шаблоне: Знакомство, Поддержка, Тикеты, Прихожая, Общение, Персонал, Логи
+        for index, cat_spec in enumerate(CATEGORIES):
+            cat = categories.get(cat_spec.key)
+            if cat is None:
+                continue
+            try:
+                await cat.edit(position=index, reason=reason)
+            except discord.HTTPException as exc:
+                errors.append(f"Порядок категории {cat.name}: {exc}")
             await asyncio.sleep(0.4)
 
         # Панели
