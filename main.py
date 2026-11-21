@@ -24,6 +24,18 @@ def setup_logging() -> None:
     root.addHandler(file)
     logging.getLogger("discord.http").setLevel(logging.WARNING)
 
+    # Диагностика шифрования голоса (DAVE/MLS): только нужные debug-сообщения, без шума
+    class _DaveOnly(logging.Filter):
+        KEYS = ("MLS", "DAVE", "transition", "Transition", "op=2", "op=3")
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            return record.levelno > logging.DEBUG or any(k in record.getMessage() for k in self.KEYS)
+
+    for name in ("discord.gateway", "discord.voice_state"):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)
+        logger.addFilter(_DaveOnly())
+
 
 async def run() -> None:
     from bot.core import PolariBot
