@@ -139,9 +139,16 @@ class GuildPlayer:
         """Диагностика: через 6 секунд пишет в лог, отправляются ли аудиопакеты."""
         await asyncio.sleep(6)
         player = getattr(vc, "_player", None)
-        log.info("Диагностика «%s»: playing=%s, пакетов=%s, connected=%s, self_mute=%s",
+        state = getattr(vc, "_connection", None)
+        session = getattr(state, "dave_session", None)
+        me_voice = vc.guild.me.voice
+        log.info("Диагностика «%s»: playing=%s, пакетов=%s, connected=%s, mute=%s/%s, suppress=%s, "
+                 "mode=%s, dave_version=%s, dave_ready=%s, can_encrypt=%s, downgraded=%s",
                  track.title, vc.is_playing(), getattr(player, "loops", "?"), vc.is_connected(),
-                 vc.guild.me.voice.self_mute if vc.guild.me.voice else "?")
+                 me_voice.self_mute if me_voice else "?", me_voice.mute if me_voice else "?",
+                 me_voice.suppress if me_voice else "?", getattr(vc, "mode", "?"),
+                 getattr(state, "dave_protocol_version", "?"), getattr(session, "ready", None),
+                 getattr(state, "can_encrypt", "?"), getattr(state, "dave_downgraded", "?"))
 
     def _after(self, error: Exception | None) -> None:
         if error:
