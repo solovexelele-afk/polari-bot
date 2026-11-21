@@ -32,6 +32,22 @@ def ffmpeg_path() -> str | None:
     return None
 
 
+class _FFmpegLog:
+    """Перенаправляет stderr ffmpeg в лог бота (видно в логах Render)."""
+
+    def write(self, data: bytes) -> int:
+        text = data.decode(errors="ignore").strip() if isinstance(data, bytes) else str(data).strip()
+        if text:
+            log.warning("ffmpeg: %s", text[:300])
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def fileno(self) -> int:
+        raise OSError("not a real file")
+
+
 @dataclass
 class Track:
     title: str
@@ -102,12 +118,23 @@ class GuildPlayer:
         stream = await asyncio.to_thread(self._open, track.url)
         self._close_stream()
         self._stream = stream
-        before = f"-ss {seek:.1f}" if seek and not track.live else ""
+        before = "-hide_banner -loglevel warning" + (f" -ss {seek:.1f}" if seek and not track.live else "")
         source = discord.FFmpegOpusAudio(stream, pipe=True, executable=exe, before_options=before or None,
-                                         options=f"-vn -filter:a volume={self.volume / 100:.2f}")
+                                         options=f"-vn -filter:a volume={self.volume / 100:.2f}",
+                                         stderr=_FFmpegLog())
         loop = self.client.loop
         self.current, self.offset, self.started_at = track, seek, time.monotonic()
         vc.play(source, after=lambda err: loop.call_soon_threadsafe(self._after, err))
+        log.info("▶ %s · канал %s · бот %s", track.title, vc.channel.id if vc.channel else "?", self.client.user)
+        loop.create_task(self._watch(vc, track))
+
+    async def _watch(self, vc: discord.VoiceClient, track: Track) -> None:
+        """Диагностика: через 6 секунд пишет в лог, отправляются ли аудиопакеты."""
+        await asyncio.sleep(6)
+        player = getattr(vc, "_player", None)
+        log.info("Диагностика «%s»: playing=%s, пакетов=%s, connected=%s, self_mute=%s",
+                 track.title, vc.is_playing(), getattr(player, "loops", "?"), vc.is_connected(),
+                 vc.guild.me.voice.self_mute if vc.guild.me.voice else "?")
 
     def _after(self, error: Exception | None) -> None:
         if error:
