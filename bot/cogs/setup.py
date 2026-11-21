@@ -57,6 +57,7 @@ class Plan:
     items: list[Item] = field(default_factory=list)
     panels: list[tuple[str, str]] = field(default_factory=list)  # (panel_key, channel_key)
     warnings: list[str] = field(default_factory=list)
+    removals: list = field(default_factory=list)  # пустые лишние каналы и категории
 
     def by(self, action: str) -> list[Item]:
         return [i for i in self.items if i.action == action]
@@ -150,6 +151,8 @@ class SetupCog(commands.Cog):
                 item.action, item.note = "doubt", "категория под вопросом — сначала привяжите её"
             plan.items.append(item)
 
+        plan.removals = await self._find_unused(guild, plan)
+
         # Панели: публикуем только те, которых ещё нет
         for panel_key, channel_key in PANEL_CHANNELS.items():
             row = await self.bot.db.fetchone("SELECT channel_id, message_id FROM panels WHERE guild_id=? AND key=?",
@@ -168,6 +171,40 @@ class SetupCog(commands.Cog):
                                  "права ей выдаст владелец вручную.")
         return plan
 
+    async def _find_unused(self, guild: discord.Guild, plan: Plan) -> list[discord.abc.GuildChannel]:
+        """Лишние каналы вне шаблона: пустые текстовые, голосовые без людей и опустевшие категории.
+
+        Не трогаем: каналы шаблона (в т.ч. сомнительные), тикеты, системные каналы сервера.
+        """
+        mapped = {getattr(i.target, "id", None) for i in plan.items if i.kind != "role"}
+        tickets_id = await self.bot.registry.get(guild.id, "channel.cat_tickets")
+        protected = {c.id for c in (guild.rules_channel, guild.public_updates_channel, guild.safety_alerts_channel)
+                     if c is not None}
+        result: list[discord.abc.GuildChannel] = []
+        for ch in guild.channels:
+            if ch.id in mapped or ch.id in protected or isinstance(ch, discord.CategoryChannel):
+                continue
+            if ch.category_id and str(ch.category_id) == tickets_id:
+                continue
+            if isinstance(ch, discord.TextChannel):
+                if not ch.permissions_for(guild.me).read_message_history:
+                    continue
+                try:
+                    if [m async for m in ch.history(limit=1)]:
+                        continue  # в канале есть сообщения — не трогаем
+                except discord.HTTPException:
+                    continue
+                result.append(ch)
+            elif isinstance(ch, (discord.VoiceChannel, discord.StageChannel)) and not ch.members:
+                result.append(ch)
+        removing = {c.id for c in result}
+        for cat in guild.categories:
+            if cat.id in mapped:
+                continue
+            if all(c.id in removing for c in cat.channels):
+                result.append(cat)
+        return result
+
     def render_plan(self, plan: Plan, applied: bool = False) -> list[discord.Embed]:
         icons = {"role": "🎭", "category": "📁", "text": "#", "voice": "🔊"}
 
@@ -184,13 +221,18 @@ class SetupCog(commands.Cog):
             ("🔗 Используются существующие (без изменений)", lines(plan.by("link") + plan.by("saved")),
              style.Colors.PRIMARY),
             ("❓ Сомнительные совпадения — НЕ трогаются", lines(plan.by("doubt")), style.Colors.WARNING),
+            ("🗑️ Пустые лишние каналы — будут удалены" if not applied else "🗑️ Удалены пустые лишние каналы",
+             [f"{'📁' if isinstance(c, discord.CategoryChannel) else '#'} **{c.name}**" for c in plan.removals],
+             style.Colors.DANGER),
         ]
         embeds = []
         head = style.base("План настройки" if not applied else "Настройка применена",
                           ("Режим **DRY RUN**: ничего не изменено.\n" if not applied else "") +
-                          "Удаление и переименование не выполняются. Права ставятся только на новые объекты.\n"
+                          "Каналы раскладываются по категориям в порядке шаблона. Удаляются только пустые "
+                          "каналы вне шаблона (без сообщений и людей). Ваши роли не переименовываются.\n"
                           "Сомнительные совпадения можно привязать командой `/config link`.",
                           color=style.Colors.PRIMARY, emoji="🛠️")
+        head.add_field(name="Удалить пустых", value=str(len(plan.removals)))
         head.add_field(name="Создать", value=str(len(plan.by("create"))))
         head.add_field(name="Использовать", value=str(len(plan.by("link")) + len(plan.by("saved"))))
         head.add_field(name="Сомнительно", value=str(len(plan.by("doubt"))))
@@ -240,6 +282,15 @@ class SetupCog(commands.Cog):
         reg = self.bot.registry
         reason = f"POLARI /setup by {actor} ({actor.id})"
         roles: dict[str, discord.Role] = {}
+        created_ids = {int(k.split(".", 1)[1]) for k in await reg.load(guild.id) if k.startswith("created.")}
+
+        # Пустые лишние каналы (сначала каналы, потом категории)
+        for ch in sorted(plan.removals, key=lambda c: isinstance(c, discord.CategoryChannel)):
+            try:
+                await ch.delete(reason=reason)
+            except discord.HTTPException as exc:
+                errors.append(f"Удаление {ch.name}: {exc}")
+            await asyncio.sleep(0.35)
 
         # Роли
         for item in [i for i in plan.items if i.kind == "role"]:
@@ -276,6 +327,13 @@ class SetupCog(commands.Cog):
             if item.action in ("link", "saved"):
                 categories[item.key] = item.target  # type: ignore[assignment]
                 await reg.set(guild.id, f"channel.{item.key}", item.target.id)  # type: ignore[union-attr]
+                if item.target.id in created_ids:  # type: ignore[union-attr]
+                    # категория создана ботом ранее — приводим права к актуальному шаблону
+                    try:
+                        await item.target.edit(overwrites=self._overwrites(guild, spec.overwrites, roles),  # type: ignore[union-attr]
+                                               reason=reason)
+                    except discord.HTTPException as exc:
+                        errors.append(f"Права {spec.name}: {exc}")
             elif item.action == "create":
                 try:
                     cat = await guild.create_category(spec.name, overwrites=self._overwrites(guild, spec.overwrites, roles),
@@ -293,11 +351,6 @@ class SetupCog(commands.Cog):
         cat_specs = {c.key: c for c in CATEGORIES}
         for item in [i for i in plan.items if i.kind in ("text", "voice")]:
             spec: ChannelSpec = item.spec  # type: ignore[no-redef]
-            if item.action in ("link", "saved"):
-                await reg.set(guild.id, f"channel.{item.key}", item.target.id)  # type: ignore[union-attr]
-                continue
-            if item.action != "create":
-                continue
             parent = categories.get(item.parent or "")
             cat_spec = cat_specs[item.parent] if item.parent else None
             # Права: категорийные + канальные; в существующей категории канал получает полный набор явно
@@ -305,6 +358,22 @@ class SetupCog(commands.Cog):
             for target, perms in spec.overwrites.items():
                 merged[target] = {**merged.get(target, {}), **perms}
             overwrites = self._overwrites(guild, merged, roles)
+            if item.action in ("link", "saved"):
+                await reg.set(guild.id, f"channel.{item.key}", item.target.id)  # type: ignore[union-attr]
+                changes: dict = {}
+                if parent and item.target.category_id != parent.id:  # type: ignore[union-attr]
+                    changes["category"] = parent  # раскладываем по нужной категории
+                if item.target.id in created_ids:  # type: ignore[union-attr]
+                    changes["overwrites"] = overwrites  # свой канал — права по шаблону
+                if changes:
+                    try:
+                        await item.target.edit(reason=reason, **changes)  # type: ignore[union-attr]
+                    except discord.HTTPException as exc:
+                        errors.append(f"Канал {spec.name}: {exc}")
+                    await asyncio.sleep(0.4)
+                continue
+            if item.action != "create":
+                continue
             try:
                 if spec.kind == "voice":
                     ch = await guild.create_voice_channel(spec.name, category=parent, overwrites=overwrites,
@@ -331,6 +400,30 @@ class SetupCog(commands.Cog):
             except discord.HTTPException as exc:
                 errors.append(f"Порядок категории {cat.name}: {exc}")
             await asyncio.sleep(0.4)
+
+        # Порядок каналов внутри категорий как в шаблоне (текстовые сверху, голосовые ниже)
+        for cat_spec in CATEGORIES:
+            parent = categories.get(cat_spec.key)
+            if parent is None:
+                continue
+            wanted = [await reg.channel(guild, c.key) for c in cat_spec.channels]
+            for is_voice in (False, True):
+                order = [c for c in wanted if c is not None and c.category_id == parent.id
+                         and isinstance(c, (discord.VoiceChannel, discord.StageChannel)) == is_voice]
+                current = [c for c in (parent.voice_channels if is_voice else parent.text_channels) if c in order]
+                if [c.id for c in current] == [c.id for c in order]:
+                    continue
+                previous = None
+                for ch in order:
+                    try:
+                        if previous is None:
+                            await ch.move(beginning=True, category=parent, reason=reason)
+                        else:
+                            await ch.move(after=previous, category=parent, reason=reason)
+                    except (discord.HTTPException, ValueError) as exc:
+                        errors.append(f"Порядок канала {ch.name}: {exc}")
+                    previous = ch
+                    await asyncio.sleep(0.3)
 
         # Панели
         for panel_key, channel_key in plan.panels:
@@ -456,7 +549,8 @@ class SetupCog(commands.Cog):
 
 
 def _signature(plan: Plan) -> tuple:
-    return tuple((i.key, i.action, getattr(i.target, "id", None)) for i in plan.items) + tuple(plan.panels)
+    return (tuple((i.key, i.action, getattr(i.target, "id", None)) for i in plan.items) + tuple(plan.panels)
+            + tuple(c.id for c in plan.removals))
 
 
 class ConfirmResetView(discord.ui.View):
@@ -530,8 +624,14 @@ class ConfirmSetupView(discord.ui.View):
         embeds = self.cog.render_plan(plan, applied=True)
         if errors:
             embeds.insert(1, style.warning("Ошибки при применении", "\n".join(f"• {e}" for e in errors)[:4000]))
-        for i in range(0, len(embeds), 10):
-            await interaction.followup.send(embeds=embeds[i:i + 10], ephemeral=True)
+        try:
+            for i in range(0, len(embeds), 10):
+                await interaction.followup.send(embeds=embeds[i:i + 10], ephemeral=True)
+        except discord.HTTPException:
+            log.info("Отчёт /setup не доставлен (канал команды мог быть удалён). Ошибки: %s", errors)
+        if errors:
+            await self.cog.bot.logs.send(interaction.guild, "setup", style.warning(  # type: ignore[arg-type]
+                "Ошибки /setup", "\n".join(f"• {e}" for e in errors)[:4000]))
 
     @discord.ui.button(label="Отмена", emoji="✖", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

@@ -123,24 +123,22 @@ def _rooms(prefix: str, key: str, emoji: list[str], count: int, overwrites: dict
 
 
 CATEGORIES: list[CategorySpec] = [
+    # Новичок (Unverified) видит здесь только памятку, правила и магазин; новости — после обзвона
     CategorySpec("cat_intro", "⎯⎯ 💙・Знакомство", ("знакомство",),
-                 {"@everyone": READ_ONLY, "@staff": P(view_channel=True, send_messages=True)},
+                 {"@everyone": HIDDEN, "onhold": READ_ONLY, "member": READ_ONLY,
+                  "@staff": P(view_channel=True, send_messages=True)},
                  [
                      ChannelSpec("news", "💙・polari-news", topic="Новости и анонсы POLARI",
-                                 aliases=("polari-news", "новости", "news", "анонсы")),
+                                 aliases=("polari-news", "новости", "news", "анонсы"),
+                                 overwrites={"onhold": HIDDEN}),
                      ChannelSpec("memo", "├📑・памятка", topic="Памятка по серверу POLARI", aliases=("памятка",)),
                      ChannelSpec("rules", "├📘・правила", topic="Правила сервера POLARI", aliases=("правила", "rules")),
                      ChannelSpec("shop", "├💎・магазин", topic="Магазин POLARI: спонсорские и кастомные роли",
                                  aliases=("магазин", "shop", "донат")),
-                     ChannelSpec("profiles", "├🌊・профили", topic="Профили участников",
-                                 aliases=("профили", "profiles"),
-                                 overwrites={"onhold": P(send_messages=False),
-                                             "member": P(send_messages=True, attach_files=True)},
-                                 slowmode=300),
                  ]),
     # Поддержка сразу под «Знакомством»: видна и новичкам, и участникам
     CategorySpec("cat_support", "⎯⎯ 🎫・Поддержка", ("поддержка", "support"),
-                 {"@everyone": HIDDEN, "member": READ_ONLY, "onhold": READ_ONLY, "@staff": STAFF_FULL},
+                 {"@everyone": HIDDEN, "member": READ_ONLY, "@staff": STAFF_FULL},
                  [
                      ChannelSpec("ticket_panel", "🎫・создать-тикет", topic="Обращения в поддержку POLARI",
                                  aliases=("создать-тикет", "тикеты", "тикет", "support")),
@@ -172,8 +170,6 @@ CATEGORIES: list[CategorySpec] = [
                  {"@everyone": HIDDEN, "member": CHAT | P(connect=True, speak=True), "@staff": STAFF_FULL},
                  [
                      ChannelSpec("chat", "💬・чат", topic="Общий чат POLARI", aliases=("чат", "общий", "general", "общение")),
-                     ChannelSpec("media", "📸・медиа", topic="Фото, видео, мемы", aliases=("медиа", "media", "мемы")),
-                     ChannelSpec("commands", "🤖・команды", topic="Команды ботов", aliases=("команды", "commands", "бот")),
                      ChannelSpec("suggestions", "💡・предложения", topic="Используйте /suggest",
                                  aliases=("предложения", "идеи", "suggestions"),
                                  overwrites={"member": P(send_messages=False, send_messages_in_threads=True)}),
@@ -182,8 +178,7 @@ CATEGORIES: list[CategorySpec] = [
                      ChannelSpec("events", "🎉・мероприятия", topic="Ивенты и турниры POLARI",
                                  aliases=("мероприятия", "ивенты", "события", "events"),
                                  overwrites={"member": P(send_messages=False)}),
-                     ChannelSpec("voice_1", "🔊・Общий 1", "voice", aliases=("общий 1", "general 1")),
-                     ChannelSpec("voice_2", "🔊・Общий 2", "voice", aliases=("общий 2", "general 2")),
+                     ChannelSpec("voice_1", "🔊・Общий", "voice", aliases=("общий", "general", "общий 1")),
                  ]),
     CategorySpec("cat_staff", "⎯⎯ 🛡️・Персонал", ("персонал", "стафф", "staff", "администрация"),
                  {"@everyone": HIDDEN, "@staff": STAFF_FULL},
@@ -191,7 +186,6 @@ CATEGORIES: list[CategorySpec] = [
                      ChannelSpec("staff_memo", "📘・памятка-персонала", topic="Памятка для персонала POLARI",
                                  aliases=("памятка-персонала", "памятка-стафф", "staff-memo"),
                                  overwrites={"@staff": P(view_channel=True, send_messages=False)}),
-                     ChannelSpec("staff_news", "📢・объявления-стафф", aliases=("объявления-стафф", "стафф-новости")),
                      ChannelSpec("staff_chat", "💬・чат-стафф", aliases=("чат-стафф", "staff-chat", "стафф-чат")),
                      ChannelSpec("interview_panel", "🎙️・обзвон-панель",
                                  topic="Очередь и команды /interview_*",
