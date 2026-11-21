@@ -36,7 +36,7 @@ PanelBuilder = Callable[[discord.TextChannel], Awaitable[discord.Message]]
 PANEL_CHANNELS = {
     "info": "info", "memo": "memo", "rules": "rules", "shop": "shop",
     "tickets": "ticket_panel", "interview": "interview_panel", "staff_memo": "staff_memo",
-    "news": "news", "tech": "tech_support", "faq": "faq",
+    "news": "news", "tech": "tech_support", "faq": "faq", "music": "music",
 }
 
 

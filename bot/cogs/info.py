@@ -214,6 +214,7 @@ class InfoCog(commands.Cog):
         setup_cog.register_panel("rules", self.post_rules)            # type: ignore[union-attr]
         setup_cog.register_panel("staff_memo", self.post_staff_memo)  # type: ignore[union-attr]
         setup_cog.register_panel("news", self.post_news)              # type: ignore[union-attr]
+        setup_cog.register_panel("music", self.post_music)            # type: ignore[union-attr]
 
     # ------------------------------------------------------------------ памятка
     async def post_memo(self, channel: discord.TextChannel) -> discord.Message:
@@ -232,6 +233,19 @@ class InfoCog(commands.Cog):
             style.Colors.PRIMARY)
         embed.set_footer(text="Выберите раздел ниже — ответ увидите только вы")
         return await style.send_panel(channel, "staff_memo", [embed], view=StaffMemoView())
+
+    async def post_music(self, channel: discord.TextChannel) -> discord.Message:
+        embed = style.header("Музыка", (
+            "Музыку на сервере включает бот **CHIP** 🎧\n\n"
+            "**`1`** Зайдите в любой голосовой канал.\n"
+            "**`2`** Здесь, в этом канале, напишите команду:\n"
+            "> `/play` **название трека** или **ссылка**\n"
+            "> например: `/play Династия` или `/play https://...`\n"
+            "**`3`** CHIP зайдёт к вам в голосовой канал и включит трек.\n\n"
+            "Остальные команды CHIP появятся в подсказке, если ввести `/` и выбрать CHIP в списке ботов."),
+            style.Colors.SECONDARY)
+        embed.set_footer(text="Пишите команды музыки только в этом канале, пожалуйста 🎵")
+        return await style.send_panel(channel, "music", [embed])
 
     async def post_news(self, channel: discord.TextChannel) -> discord.Message:
         embed = style.header("Добро пожаловать", (

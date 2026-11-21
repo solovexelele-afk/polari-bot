@@ -111,7 +111,7 @@ class AdminCog(commands.Cog):
     async def _channel_key_ac(self, interaction: discord.Interaction, current: str):
         return await _ac(current, CHANNEL_KEYS)
 
-    @app_commands.command(name="panel", description="Опубликовать панель заново (старая останется)")
+    @app_commands.command(name="panel", description="Опубликовать панель заново (старая панель бота заменяется)")
     @app_commands.choices(panel=[app_commands.Choice(name=k, value=k) for k in PANEL_CHANNELS])
     @app_commands.guild_only()
     @require("config")
@@ -124,6 +124,17 @@ class AdminCog(commands.Cog):
         if not builder or not target:
             await interaction.followup.send(embed=style.error("Канал панели не найден. Укажите channel."), ephemeral=True)
             return
+        old = await self.bot.db.fetchone("SELECT channel_id, message_id FROM panels WHERE guild_id=? AND key=?",
+                                         (interaction.guild_id, panel.value))
+        if old:
+            old_channel = interaction.guild.get_channel(old["channel_id"])  # type: ignore[union-attr]
+            if isinstance(old_channel, discord.TextChannel):
+                try:
+                    old_msg = await old_channel.fetch_message(old["message_id"])
+                    if old_msg.author.id == self.bot.user.id:  # type: ignore[union-attr]
+                        await old_msg.delete()
+                except discord.HTTPException:
+                    pass  # старое сообщение уже удалено
         msg = await builder(target)
         await self.bot.db.save_panel(interaction.guild_id, panel.value, target.id, msg.id)  # type: ignore[arg-type]
         await interaction.followup.send(embed=style.success("Панель опубликована", msg.jump_url), ephemeral=True)
