@@ -1,0 +1,22 @@
+# Render Blueprint для POLARI. Секреты (sync: false) вводятся в панели Render при создании.
+services:
+  - type: web
+    name: polari-bot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: GUILD_ID
+        sync: false
+      - key: BACKUP_CHANNEL_ID
+        sync: false
+      - key: BACKUP_INTERVAL_MINUTES
+        value: "30"

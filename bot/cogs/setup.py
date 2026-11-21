@@ -1,0 +1,421 @@
+"""/setup — безопасная первоначальная настройка сервера POLARI.
+
+Гарантии:
+  * ничего не удаляется и не переименовывается;
+  * дубликаты не создаются: точные совпадения и алиасы используются как есть,
+    похожие названия помечаются как «сомнительные» и НЕ трогаются без решения владельца;
+  * права выставляются только на новых объектах;
+  * DRY RUN ничего не меняет, APPLY выполняется только после нажатия «Применить».
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Awaitable, Callable
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from bot.data.blueprint import CATEGORIES, ROLES, STAFF_KEYS, CategorySpec, ChannelSpec, keys_with_level
+from bot.database.db import now_iso
+from bot.embeds import style
+from bot.utils.checks import require
+from bot.utils.helpers import normalize, similarity
+
+if TYPE_CHECKING:
+    from bot.core import PolariBot
+
+log = logging.getLogger("polari.setup")
+
+EXACT, DOUBT = 1.0, 0.72
+PanelBuilder = Callable[[discord.TextChannel], Awaitable[discord.Message]]
+# Ключ панели -> ключ канала, в который она публикуется
+PANEL_CHANNELS = {
+    "info": "info", "memo": "memo", "rules": "rules", "shop": "shop",
+    "tickets": "ticket_panel", "interview": "interview_panel",
+}
+
+
+@dataclass
+class Item:
+    kind: str                 # role | category | text | voice
+    key: str
+    name: str
+    action: str               # link | create | doubt | saved
+    target: object | None = None
+    note: str = ""
+    spec: object | None = None
+    parent: str | None = None
+
+
+@dataclass
+class Plan:
+    items: list[Item] = field(default_factory=list)
+    panels: list[tuple[str, str]] = field(default_factory=list)  # (panel_key, channel_key)
+    warnings: list[str] = field(default_factory=list)
+
+    def by(self, action: str) -> list[Item]:
+        return [i for i in self.items if i.action == action]
+
+
+def _digits(text: str) -> str:
+    return "".join(re.findall(r"\d+", text))
+
+
+def _score(spec_name: str, aliases: tuple[str, ...], actual: str) -> float:
+    actual_n = normalize(actual)
+    names = [spec_name, *aliases]
+    if any(normalize(n) == actual_n for n in names):
+        return EXACT
+    # «Ожидание 1» и «Ожидание 2» — разные объекты, а не похожие
+    if _digits(spec_name) != _digits(actual):
+        return 0.0
+    return max(similarity(n, actual) for n in names)
+
+
+class SetupCog(commands.Cog):
+    def __init__(self, bot: "PolariBot"):
+        self.bot = bot
+        self.panel_builders: dict[str, PanelBuilder] = {}
+        self._lock = asyncio.Lock()
+
+    def register_panel(self, key: str, builder: PanelBuilder) -> None:
+        """Модули регистрируют функции публикации своих панелей."""
+        self.panel_builders[key] = builder
+
+    # ------------------------------------------------------------------ планирование
+    def _match(self, spec_name: str, aliases: tuple[str, ...], pool: list, used: set[int],
+               exact_only: bool) -> tuple[object | None, float]:
+        best, best_score = None, 0.0
+        for obj in pool:
+            if obj.id in used:
+                continue
+            score = _score(spec_name, aliases, obj.name)
+            if exact_only and score < EXACT:
+                continue
+            if score > best_score:
+                best, best_score = obj, score
+        return best, best_score
+
+    async def build_plan(self, guild: discord.Guild) -> Plan:
+        plan = Plan()
+        saved = await self.bot.registry.load(guild.id)
+        roles_pool = [r for r in guild.roles if not r.is_default() and not r.managed]
+        cats_pool = list(guild.categories)
+        text_pool = [c for c in guild.channels if isinstance(c, (discord.TextChannel, discord.ForumChannel))]
+        voice_pool = [c for c in guild.channels if isinstance(c, (discord.VoiceChannel, discord.StageChannel))]
+
+        specs: list[tuple[str, str, str, tuple, list, object, str | None]] = []
+        for r in ROLES:
+            specs.append(("role", r.key, r.name, r.aliases, roles_pool, r, None))
+        for cat in CATEGORIES:
+            specs.append(("category", cat.key, cat.name, cat.aliases, cats_pool, cat, None))
+            for ch in cat.channels:
+                pool = voice_pool if ch.kind == "voice" else text_pool
+                specs.append((ch.kind, ch.key, ch.name, ch.aliases, pool, ch, cat.key))
+
+        used: set[int] = set()
+        resolved: dict[str, Item] = {}
+        # 1) объекты, уже сохранённые ранее
+        for kind, key, name, aliases, pool, spec, parent in specs:
+            prefix = "role" if kind == "role" else "channel"
+            sid = saved.get(f"{prefix}.{key}")
+            obj = next((o for o in pool if sid and o.id == int(sid)), None)
+            if obj:
+                used.add(obj.id)
+                resolved[key] = Item(kind, key, name, "saved", obj, spec=spec, parent=parent)
+        # 2) точные совпадения и алиасы, 3) похожие названия
+        for exact_only in (True, False):
+            for kind, key, name, aliases, pool, spec, parent in specs:
+                if key in resolved:
+                    continue
+                obj, score = self._match(name, aliases, pool, used, exact_only)
+                if obj is None:
+                    continue
+                if score >= EXACT:
+                    used.add(obj.id)
+                    resolved[key] = Item(kind, key, name, "link", obj, spec=spec, parent=parent)
+                elif score >= DOUBT:
+                    used.add(obj.id)
+                    resolved[key] = Item(kind, key, name, "doubt", obj,
+                                         f"похоже на «{obj.name}» ({score:.0%})", spec=spec, parent=parent)
+        for kind, key, name, aliases, pool, spec, parent in specs:
+            item = resolved.get(key) or Item(kind, key, name, "create", spec=spec, parent=parent)
+            # Категория под вопросом — не создаём её каналы «в никуда», ждём решения владельца
+            if item.action == "create" and parent and resolved.get(parent) and resolved[parent].action == "doubt":
+                item.action, item.note = "doubt", "категория под вопросом — сначала привяжите её"
+            plan.items.append(item)
+
+        # Панели: публикуем только те, которых ещё нет
+        for panel_key, channel_key in PANEL_CHANNELS.items():
+            row = await self.bot.db.fetchone("SELECT channel_id, message_id FROM panels WHERE guild_id=? AND key=?",
+                                             (guild.id, panel_key))
+            if row and guild.get_channel(row["channel_id"]):
+                continue
+            plan.panels.append((panel_key, channel_key))
+
+        me = guild.me
+        if not me.guild_permissions.manage_roles:
+            plan.warnings.append("У бота нет права **Управлять ролями**.")
+        if not me.guild_permissions.manage_channels:
+            plan.warnings.append("У бота нет права **Управлять каналами**.")
+        if not me.guild_permissions.administrator:
+            plan.warnings.append("У бота нет Administrator: роль «Основатель» будет создана без прав, "
+                                 "права ей выдаст владелец вручную.")
+        return plan
+
+    def render_plan(self, plan: Plan, applied: bool = False) -> list[discord.Embed]:
+        icons = {"role": "🎭", "category": "📁", "text": "#", "voice": "🔊"}
+
+        def lines(items: list[Item]) -> list[str]:
+            out = []
+            for i in items:
+                where = f" → `{i.target.name}`" if i.target is not None and i.action != "create" else ""
+                note = f" — {i.note}" if i.note else ""
+                out.append(f"{icons[i.kind]} **{i.name}**{where}{note}")
+            return out
+
+        sections = [
+            ("🆕 Будет создано" if not applied else "🆕 Создано", lines(plan.by("create")), style.Colors.SECONDARY),
+            ("🔗 Используются существующие (без изменений)", lines(plan.by("link") + plan.by("saved")),
+             style.Colors.PRIMARY),
+            ("❓ Сомнительные совпадения — НЕ трогаются", lines(plan.by("doubt")), style.Colors.WARNING),
+        ]
+        embeds = []
+        head = style.base("План настройки" if not applied else "Настройка применена",
+                          ("Режим **DRY RUN**: ничего не изменено.\n" if not applied else "") +
+                          "Удаление и переименование не выполняются. Права ставятся только на новые объекты.\n"
+                          "Сомнительные совпадения можно привязать командой `/config link`.",
+                          color=style.Colors.PRIMARY, emoji="🛠️")
+        head.add_field(name="Создать", value=str(len(plan.by("create"))))
+        head.add_field(name="Использовать", value=str(len(plan.by("link")) + len(plan.by("saved"))))
+        head.add_field(name="Сомнительно", value=str(len(plan.by("doubt"))))
+        if plan.panels:
+            head.add_field(name="Панели к публикации",
+                           value=", ".join(f"`{p}` → {c}" for p, c in plan.panels), inline=False)
+        if plan.warnings:
+            head.add_field(name="⚠️ Предупреждения", value="\n".join(plan.warnings), inline=False)
+        embeds.append(head)
+        for heading, rows, color in sections:
+            if not rows:
+                continue
+            chunk = ""
+            for row in rows:
+                if len(chunk) + len(row) > 3900:
+                    embeds.append(discord.Embed(title=heading, description=chunk, color=color))
+                    chunk = ""
+                chunk += row + "\n"
+            embeds.append(discord.Embed(title=heading, description=chunk, color=color))
+        return embeds
+
+    # ------------------------------------------------------------------ применение
+    def _overwrites(self, guild: discord.Guild, spec_map: dict, roles: dict[str, discord.Role]
+                    ) -> dict[discord.abc.Snowflake, discord.PermissionOverwrite]:
+        result: dict[discord.abc.Snowflake, discord.PermissionOverwrite] = {}
+        for target, perms in spec_map.items():
+            if target == "@everyone":
+                targets = [guild.default_role]
+            elif target == "@staff":
+                targets = [roles[k] for k in STAFF_KEYS if k in roles]
+            elif target.startswith("@level:"):
+                targets = [roles[k] for k in keys_with_level(int(target.split(":")[1])) if k in roles]
+            else:
+                targets = [roles[target]] if target in roles else []
+            for t in targets:
+                ow = result.get(t, discord.PermissionOverwrite())
+                ow.update(**perms)
+                result[t] = ow
+        # Бот всегда должен видеть свои каналы
+        result[guild.me] = discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, manage_channels=True, manage_messages=True, embed_links=True,
+            attach_files=True, read_message_history=True, connect=True, move_members=True, manage_permissions=True)
+        return result
+
+    async def apply_plan(self, guild: discord.Guild, plan: Plan, actor: discord.Member) -> list[str]:
+        errors: list[str] = []
+        reg = self.bot.registry
+        reason = f"POLARI /setup by {actor} ({actor.id})"
+        roles: dict[str, discord.Role] = {}
+
+        # Роли
+        for item in [i for i in plan.items if i.kind == "role"]:
+            if item.action in ("link", "saved"):
+                roles[item.key] = item.target  # type: ignore[assignment]
+                await reg.set(guild.id, f"role.{item.key}", item.target.id)  # type: ignore[union-attr]
+            elif item.action == "create":
+                spec = item.spec
+                try:
+                    role = await guild.create_role(name=spec.name, colour=discord.Colour(spec.color), hoist=spec.hoist,
+                                                   permissions=discord.Permissions(**spec.perms), reason=reason)
+                except discord.Forbidden:
+                    try:
+                        role = await guild.create_role(name=spec.name, colour=discord.Colour(spec.color),
+                                                       hoist=spec.hoist, reason=reason)
+                        errors.append(f"Роль {spec.name} создана без прав (бот не может выдать эти права).")
+                    except discord.HTTPException as exc:
+                        errors.append(f"Роль {spec.name}: {exc}")
+                        continue
+                except discord.HTTPException as exc:
+                    errors.append(f"Роль {spec.name}: {exc}")
+                    continue
+                roles[item.key] = role
+                item.target = role
+                await reg.set(guild.id, f"role.{item.key}", role.id)
+                await asyncio.sleep(0.4)
+
+        # Категории и каналы
+        categories: dict[str, discord.CategoryChannel] = {}
+        cat_created: set[str] = set()
+        for item in [i for i in plan.items if i.kind == "category"]:
+            spec: CategorySpec = item.spec  # type: ignore[assignment]
+            if item.action in ("link", "saved"):
+                categories[item.key] = item.target  # type: ignore[assignment]
+                await reg.set(guild.id, f"channel.{item.key}", item.target.id)  # type: ignore[union-attr]
+            elif item.action == "create":
+                try:
+                    cat = await guild.create_category(spec.name, overwrites=self._overwrites(guild, spec.overwrites, roles),
+                                                      reason=reason)
+                except discord.HTTPException as exc:
+                    errors.append(f"Категория {spec.name}: {exc}")
+                    continue
+                categories[item.key] = cat
+                cat_created.add(item.key)
+                item.target = cat
+                await reg.set(guild.id, f"channel.{item.key}", cat.id)
+                await asyncio.sleep(0.4)
+
+        cat_specs = {c.key: c for c in CATEGORIES}
+        for item in [i for i in plan.items if i.kind in ("text", "voice")]:
+            spec: ChannelSpec = item.spec  # type: ignore[no-redef]
+            if item.action in ("link", "saved"):
+                await reg.set(guild.id, f"channel.{item.key}", item.target.id)  # type: ignore[union-attr]
+                continue
+            if item.action != "create":
+                continue
+            parent = categories.get(item.parent or "")
+            cat_spec = cat_specs[item.parent] if item.parent else None
+            # Права: категорийные + канальные; в существующей категории канал получает полный набор явно
+            merged = dict(cat_spec.overwrites) if cat_spec else {}
+            for target, perms in spec.overwrites.items():
+                merged[target] = {**merged.get(target, {}), **perms}
+            overwrites = self._overwrites(guild, merged, roles)
+            try:
+                if spec.kind == "voice":
+                    ch = await guild.create_voice_channel(spec.name, category=parent, overwrites=overwrites,
+                                                          user_limit=spec.user_limit or None, reason=reason)
+                else:
+                    ch = await guild.create_text_channel(spec.name, category=parent, overwrites=overwrites,
+                                                         topic=spec.topic or None, slowmode_delay=spec.slowmode,
+                                                         reason=reason)
+            except discord.HTTPException as exc:
+                errors.append(f"Канал {spec.name}: {exc}")
+                continue
+            item.target = ch
+            await reg.set(guild.id, f"channel.{item.key}", ch.id)
+            await asyncio.sleep(0.4)
+
+        # Панели
+        for panel_key, channel_key in plan.panels:
+            builder = self.panel_builders.get(panel_key)
+            channel = await reg.text(guild, channel_key)
+            if not builder or not channel:
+                errors.append(f"Панель {panel_key}: канал {channel_key} не найден.")
+                continue
+            try:
+                msg = await builder(channel)
+                await self.bot.db.save_panel(guild.id, panel_key, channel.id, msg.id)
+            except discord.HTTPException as exc:
+                errors.append(f"Панель {panel_key}: {exc}")
+            await asyncio.sleep(0.4)
+
+        await reg.set(guild.id, "setup.applied_at", now_iso())
+        await reg.set(guild.id, "setup.applied_by", actor.id)
+        embed = style.log_embed("Настройка сервера применена", emoji="🛠️", fields=[
+            ("Администратор", actor.mention),
+            ("Создано", str(len(plan.by("create")))),
+            ("Привязано", str(len(plan.by("link")))),
+            ("Ошибки", "\n".join(errors)[:1000] or "нет"),
+        ])
+        await self.bot.logs.send(guild, "setup", embed)
+        return errors
+
+    # ------------------------------------------------------------------ команда
+    @app_commands.command(name="setup", description="Настройка сервера POLARI: план (DRY RUN) или применение")
+    @app_commands.describe(mode="dry_run — только показать план; apply — показать план и применить после подтверждения")
+    @app_commands.choices(mode=[app_commands.Choice(name="DRY RUN — показать план", value="dry_run"),
+                                app_commands.Choice(name="APPLY — применить после подтверждения", value="apply")])
+    @app_commands.guild_only()
+    @require("config")
+    async def setup_cmd(self, interaction: discord.Interaction, mode: app_commands.Choice[str]) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = interaction.guild
+        assert guild
+        plan = await self.build_plan(guild)
+        embeds = self.render_plan(plan)
+        if mode.value == "dry_run":
+            for i in range(0, len(embeds), 10):
+                await interaction.followup.send(embeds=embeds[i:i + 10], ephemeral=True)
+            return
+        view = ConfirmSetupView(self, plan, interaction.user.id)  # type: ignore[arg-type]
+        for i in range(0, len(embeds), 10):
+            last = i + 10 >= len(embeds)
+            if last:
+                await interaction.followup.send(embeds=embeds[i:i + 10], view=view, ephemeral=True)
+            else:
+                await interaction.followup.send(embeds=embeds[i:i + 10], ephemeral=True)
+
+
+def _signature(plan: Plan) -> tuple:
+    return tuple((i.key, i.action, getattr(i.target, "id", None)) for i in plan.items) + tuple(plan.panels)
+
+
+class ConfirmSetupView(discord.ui.View):
+    def __init__(self, cog: SetupCog, plan: Plan, author_id: int):
+        super().__init__(timeout=300)
+        self.cog, self.plan, self.author_id = cog, plan, author_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(embed=style.error("Подтвердить может только автор команды."),
+                                                    ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Применить", emoji="✅", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.cog._lock.locked():
+            await interaction.response.send_message(embed=style.error("Настройка уже выполняется."), ephemeral=True)
+            return
+        self.stop()
+        await interaction.response.edit_message(
+            embeds=[style.base("Применяю настройку", "Создаю роли, каналы и панели. Это займёт до пары минут…",
+                               emoji="⏳")], view=None)
+        async with self.cog._lock:
+            guild = interaction.guild
+            assert guild and isinstance(interaction.user, discord.Member)
+            # Пересчёт плана прямо перед применением: если сервер изменился — не применяем
+            plan = await self.cog.build_plan(guild)
+            if _signature(plan) != _signature(self.plan):
+                await interaction.followup.send(embed=style.warning(
+                    "Сервер изменился", "С момента показа плана на сервере что-то изменилось. "
+                    "Ничего не применено — запустите `/setup` ещё раз и проверьте новый план."), ephemeral=True)
+                return
+            errors = await self.cog.apply_plan(guild, plan, interaction.user)
+        embeds = self.cog.render_plan(plan, applied=True)
+        if errors:
+            embeds.insert(1, style.warning("Ошибки при применении", "\n".join(f"• {e}" for e in errors)[:4000]))
+        for i in range(0, len(embeds), 10):
+            await interaction.followup.send(embeds=embeds[i:i + 10], ephemeral=True)
+
+    @discord.ui.button(label="Отмена", emoji="✖", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(embeds=[style.base("Настройка отменена", "Ничего не изменено.")],
+                                                view=None)
+
+
+async def setup(bot: "PolariBot") -> None:
+    await bot.add_cog(SetupCog(bot))
