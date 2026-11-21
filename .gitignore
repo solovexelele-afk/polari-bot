@@ -6,3 +6,4 @@ data/*.db
 data/*.db-*
 data/logs/
 data/transcripts/
+bin/

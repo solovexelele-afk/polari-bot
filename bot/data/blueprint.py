@@ -178,6 +178,8 @@ CATEGORIES: list[CategorySpec] = [
                      ChannelSpec("events", "🎉・мероприятия", topic="Ивенты и турниры POLARI",
                                  aliases=("мероприятия", "ивенты", "события", "events"),
                                  overwrites={"member": P(send_messages=False)}),
+                     ChannelSpec("music", "🎵・музыка", topic="Радио и музыка: /play в голосовом канале",
+                                 aliases=("музыка", "music"), overwrites={"member": P(send_messages=False)}),
                      ChannelSpec("voice_1", "🔊・Общий", "voice", aliases=("общий", "general", "общий 1")),
                  ]),
     CategorySpec("cat_staff", "⎯⎯ 🛡️・Персонал", ("персонал", "стафф", "staff", "администрация"),
