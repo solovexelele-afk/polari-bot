@@ -98,7 +98,14 @@ class GuildPlayer:
         """Открывает поток в Python. ffmpeg получает данные через stdin, а не по сети:
         статическая сборка ffmpeg на Render падает (SIGSEGV) при сетевых запросах."""
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Icy-MetaData": "0"})
-        return urllib.request.urlopen(request, timeout=15)
+        last_error: Exception | None = None
+        for _attempt in range(3):  # радиосерверы иногда отвечают с задержкой — пробуем ещё раз
+            try:
+                return urllib.request.urlopen(request, timeout=25)
+            except Exception as exc:
+                last_error = exc
+                time.sleep(1)
+        raise RuntimeError(f"источник не отвечает ({last_error})")
 
     def _close_stream(self) -> None:
         stream, self._stream = self._stream, None
