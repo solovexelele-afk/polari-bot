@@ -102,6 +102,25 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_grants_exp ON role_grants(active, expires_at);
     CREATE INDEX idx_pun_exp ON punishments(active, expires_at);
     """,
+    # v2 — киновечера
+    """
+    CREATE TABLE movies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, title TEXT NOT NULL,
+        year INTEGER, genre TEXT, description TEXT, added_by INTEGER, watched_at TEXT, created_at TEXT NOT NULL
+    );
+    CREATE TABLE movie_polls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, day TEXT NOT NULL,
+        channel_id INTEGER, message_id INTEGER, options TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',          -- open | closed | started | finished
+        closes_at TEXT NOT NULL, starts_at TEXT NOT NULL, winner_id INTEGER, event_id INTEGER,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE movie_votes (
+        poll_id INTEGER NOT NULL, user_id INTEGER NOT NULL, movie_id INTEGER NOT NULL,
+        PRIMARY KEY (poll_id, user_id)
+    );
+    CREATE INDEX idx_movie_polls ON movie_polls(guild_id, day);
+    """,
 ]
 
 

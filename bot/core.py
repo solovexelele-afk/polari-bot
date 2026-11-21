@@ -29,6 +29,7 @@ COGS = [
     "bot.cogs.community",
     "bot.cogs.admin",
     "bot.cogs.music",
+    "bot.cogs.movies",
 ]
 
 
