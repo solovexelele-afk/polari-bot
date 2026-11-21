@@ -44,16 +44,8 @@ class HostingService:
         app = web.Application()
 
         async def health(_: web.Request) -> web.Response:
-            from bot.music.player import ffmpeg_path
-
             ready = self.bot.is_ready()
-            music = self.bot.get_cog("MusicCog")
-            workers = getattr(music, "workers", [])
-            return web.json_response({
-                "status": "ok" if ready else "starting", "bot": str(self.bot.user or ""),
-                "ffmpeg": bool(ffmpeg_path()), "music_selftest": getattr(music, "selftest", "n/a"),
-                "music_workers": len(workers), "music_workers_ready": sum(1 for w in workers if w.is_ready()),
-            })
+            return web.json_response({"status": "ok" if ready else "starting", "bot": str(self.bot.user or "")})
 
         app.router.add_get("/", health)
         app.router.add_get("/health", health)

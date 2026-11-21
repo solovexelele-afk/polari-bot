@@ -140,7 +140,7 @@ CURRENCY = "руб."
 
 # Цены первых четырёх товаров взяты с TENDERLE; VIP и кастомная роль — предложение, утвердите их.
 SHOP_ITEMS: list[ShopItem] = [
-    ShopItem("custom_sponsor", "Кастом спонсор", "✦", 8000, 30,
+    ShopItem("custom_sponsor", "Кастом спонсор", "💫", 8000, 30,
              "Кастомная спонсорская роль с вашим названием и цветом, отображается выше всех на сервере.",
              role_key="custom_sponsor", custom=True, custom_above="custom_sponsor"),
     ShopItem("diamond", "Роль Алмаз", "💎", 6000, 30,
