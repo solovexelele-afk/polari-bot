@@ -35,7 +35,8 @@ PanelBuilder = Callable[[discord.TextChannel], Awaitable[discord.Message]]
 # Ключ панели -> ключ канала, в который она публикуется
 PANEL_CHANNELS = {
     "info": "info", "memo": "memo", "rules": "rules", "shop": "shop",
-    "tickets": "ticket_panel", "interview": "interview_panel",
+    "tickets": "ticket_panel", "interview": "interview_panel", "staff_memo": "staff_memo",
+    "news": "news",
 }
 
 
@@ -264,6 +265,7 @@ class SetupCog(commands.Cog):
                 roles[item.key] = role
                 item.target = role
                 await reg.set(guild.id, f"role.{item.key}", role.id)
+                await reg.set(guild.id, f"created.{role.id}", "role")
                 await asyncio.sleep(0.4)
 
         # Категории и каналы
@@ -285,6 +287,7 @@ class SetupCog(commands.Cog):
                 cat_created.add(item.key)
                 item.target = cat
                 await reg.set(guild.id, f"channel.{item.key}", cat.id)
+                await reg.set(guild.id, f"created.{cat.id}", "channel")
                 await asyncio.sleep(0.4)
 
         cat_specs = {c.key: c for c in CATEGORIES}
@@ -305,7 +308,7 @@ class SetupCog(commands.Cog):
             try:
                 if spec.kind == "voice":
                     ch = await guild.create_voice_channel(spec.name, category=parent, overwrites=overwrites,
-                                                          user_limit=spec.user_limit or None, reason=reason)
+                                                          user_limit=spec.user_limit, reason=reason)
                 else:
                     ch = await guild.create_text_channel(spec.name, category=parent, overwrites=overwrites,
                                                          topic=spec.topic or None, slowmode_delay=spec.slowmode,
@@ -315,6 +318,7 @@ class SetupCog(commands.Cog):
                 continue
             item.target = ch
             await reg.set(guild.id, f"channel.{item.key}", ch.id)
+            await reg.set(guild.id, f"created.{ch.id}", "channel")
             await asyncio.sleep(0.4)
 
         # Панели
@@ -342,17 +346,89 @@ class SetupCog(commands.Cog):
         await self.bot.logs.send(guild, "setup", embed)
         return errors
 
+    # ------------------------------------------------------------------ сброс
+    async def collect_created(self, guild: discord.Guild) -> tuple[list[discord.Role], list[discord.abc.GuildChannel]]:
+        """Всё, что создал бот: записи в БД + аудит-лог (создано пользователем-ботом)."""
+        ids: set[int] = {int(k.split(".", 1)[1]) for k in (await self.bot.registry.load(guild.id))
+                         if k.startswith("created.")}
+        if guild.me.guild_permissions.view_audit_log:
+            for action in (discord.AuditLogAction.channel_create, discord.AuditLogAction.role_create):
+                try:
+                    async for entry in guild.audit_logs(limit=500, action=action, user=guild.me):
+                        if entry.target:
+                            ids.add(entry.target.id)
+                except discord.HTTPException as exc:
+                    log.warning("Аудит-лог недоступен: %s", exc)
+        roles = [r for r in guild.roles if r.id in ids and not r.managed and r < guild.me.top_role]
+        channels = [c for c in guild.channels if c.id in ids]
+        return roles, channels
+
+    async def show_reset(self, interaction: discord.Interaction) -> None:
+        guild = interaction.guild
+        assert guild
+        roles, channels = await self.collect_created(guild)
+        cats = [c for c in channels if isinstance(c, discord.CategoryChannel)]
+        others = [c for c in channels if not isinstance(c, discord.CategoryChannel)]
+        text = (f"**Роли ({len(roles)}):** " + (", ".join(r.name for r in roles) or "—")
+                + f"\n\n**Категории ({len(cats)}):** " + (", ".join(c.name for c in cats) or "—")
+                + f"\n\n**Каналы ({len(others)}):** " + (", ".join(c.name for c in others) or "—")
+                + "\n\nТакже будут удалены сообщения-панели бота в остальных каналах и сброшены привязки. "
+                "Заказы, наказания и история собеседований в базе **сохранятся**.\n"
+                "> ⚠️ Удаление необратимо. Объекты, созданные не ботом, не затрагиваются.")
+        await interaction.followup.send(embed=style.warning("Сброс POLARI", text[:4000]),
+                                        view=ConfirmResetView(self, interaction.user.id), ephemeral=True)
+
+    async def apply_reset(self, guild: discord.Guild, actor: discord.Member) -> tuple[int, int, list[str]]:
+        roles, channels = await self.collect_created(guild)
+        created_ids = {c.id for c in channels}
+        errors: list[str] = []
+        reason = f"POLARI /setup reset by {actor} ({actor.id})"
+        rows = await self.bot.db.fetchall("SELECT channel_id FROM panels WHERE guild_id=?", (guild.id,))
+        for cid in {r["channel_id"] for r in rows} - created_ids:
+            ch = guild.get_channel(cid)
+            if isinstance(ch, discord.TextChannel):
+                try:
+                    await ch.purge(limit=100, check=lambda m: m.author.id == guild.me.id, reason=reason)
+                except discord.HTTPException as exc:
+                    errors.append(f"Панели в #{ch.name}: {exc}")
+        channels.sort(key=lambda c: isinstance(c, discord.CategoryChannel))  # сначала каналы, потом категории
+        deleted_ch = 0
+        for ch in channels:
+            try:
+                await ch.delete(reason=reason)
+                deleted_ch += 1
+            except discord.HTTPException as exc:
+                errors.append(f"Канал {ch.name}: {exc}")
+            await asyncio.sleep(0.35)
+        deleted_roles = 0
+        for role in roles:
+            try:
+                await role.delete(reason=reason)
+                deleted_roles += 1
+            except discord.HTTPException as exc:
+                errors.append(f"Роль {role.name}: {exc}")
+            await asyncio.sleep(0.35)
+        await self.bot.db.execute("DELETE FROM guild_settings WHERE guild_id=? AND (key LIKE 'role.%' OR "
+                                  "key LIKE 'channel.%' OR key LIKE 'created.%' OR key LIKE 'setup.%')", (guild.id,))
+        await self.bot.db.execute("DELETE FROM panels WHERE guild_id=?", (guild.id,))
+        self.bot.registry._cache.pop(guild.id, None)
+        return deleted_ch, deleted_roles, errors
+
     # ------------------------------------------------------------------ команда
     @app_commands.command(name="setup", description="Настройка сервера POLARI: план (DRY RUN) или применение")
     @app_commands.describe(mode="dry_run — только показать план; apply — показать план и применить после подтверждения")
     @app_commands.choices(mode=[app_commands.Choice(name="DRY RUN — показать план", value="dry_run"),
-                                app_commands.Choice(name="APPLY — применить после подтверждения", value="apply")])
+                                app_commands.Choice(name="APPLY — применить после подтверждения", value="apply"),
+                                app_commands.Choice(name="RESET — удалить всё, что создал POLARI", value="reset")])
     @app_commands.guild_only()
     @require("config")
     async def setup_cmd(self, interaction: discord.Interaction, mode: app_commands.Choice[str]) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild = interaction.guild
         assert guild
+        if mode.value == "reset":
+            await self.show_reset(interaction)
+            return
         plan = await self.build_plan(guild)
         embeds = self.render_plan(plan)
         if mode.value == "dry_run":
@@ -370,6 +446,42 @@ class SetupCog(commands.Cog):
 
 def _signature(plan: Plan) -> tuple:
     return tuple((i.key, i.action, getattr(i.target, "id", None)) for i in plan.items) + tuple(plan.panels)
+
+
+class ConfirmResetView(discord.ui.View):
+    def __init__(self, cog: SetupCog, author_id: int):
+        super().__init__(timeout=180)
+        self.cog, self.author_id = cog, author_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(embed=style.error("Подтвердить может только автор команды."),
+                                                    ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Удалить созданное POLARI", emoji="🗑️", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.cog._lock.locked():
+            await interaction.response.send_message(embed=style.error("Настройка уже выполняется."), ephemeral=True)
+            return
+        self.stop()
+        await interaction.response.edit_message(embed=style.base("Сброс", "Удаляю созданное ботом…", emoji="⏳"),
+                                                view=None)
+        async with self.cog._lock:
+            ch, roles, errors = await self.cog.apply_reset(interaction.guild, interaction.user)  # type: ignore[arg-type]
+        text = f"Удалено каналов: **{ch}**, ролей: **{roles}**.\nТеперь выполните `/setup` → APPLY."
+        if errors:
+            text += "\n\n**Ошибки:**\n" + "\n".join(f"• {e}" for e in errors)[:3000]
+        try:
+            await interaction.followup.send(embed=style.success("Сброс выполнен", text), ephemeral=True)
+        except discord.HTTPException:
+            pass  # канал, где вызвали команду, мог быть удалён
+
+    @discord.ui.button(label="Отмена", emoji="✖", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.stop()
+        await interaction.response.edit_message(embed=style.base("Сброс отменён", "Ничего не удалено."), view=None)
 
 
 class ConfirmSetupView(discord.ui.View):

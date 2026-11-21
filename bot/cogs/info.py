@@ -101,6 +101,106 @@ class RulePager(discord.ui.View):
         await interaction.response.edit_message(embed=rule_embed(RULES[self.index]), view=self)
 
 
+STAFF_SECTIONS = {
+    "interview": ("🎙️", "Обзвон", "Как проводить собеседование"),
+    "moderation": ("🔨", "Модерация", "Команды и уровни доступа"),
+    "punishments": ("⚖️", "Наказания", "Таблица нарушений и сроков"),
+    "tickets": ("🎫", "Тикеты", "Как работать с обращениями"),
+    "shop": ("💳", "Магазин и оплаты", "Подтверждение покупок"),
+    "logs": ("📜", "Логи и бэкапы", "Где что записывается"),
+    "admin": ("🛠️", "Администрирование", "Настройка бота"),
+}
+
+
+def staff_section(key: str) -> discord.Embed:
+    emoji, name, _ = STAFF_SECTIONS[key]
+    embed = discord.Embed(title=f"{emoji}  {name}", color=style.Colors.SECONDARY)
+    if key == "interview":
+        embed.description = (
+            "**Порядок собеседования**\n"
+            "`1` Новичок заходит в комнату **Ожидание** — в канал обзвон-панели приходит уведомление.\n"
+            "`2` Зайдите в голос и нажмите **«Взять на собеседование»** — бот переместит вас обоих "
+            "в свободную комнату **Собеседование**.\n"
+            "`3` Познакомьтесь, спросите, откуда узнал о сервере, прочитал ли правила, сколько лет.\n"
+            "`4` Решение:\n"
+            "> `/interview_pass user:@ник` — доступ к серверу\n"
+            "> `/interview_fail user:@ник reason:причина` — отказ, участник остаётся на проверке\n"
+            "> `/interview_reset` — отправить на повторную проверку\n"
+            "`5` `/interview_queue` — кто ждёт, `/interview_status` — история участника.\n\n"
+            "⚠️ Не пропускайте без голосового общения. Сомневаетесь — позовите старшего.")
+    elif key == "moderation":
+        embed.description = (
+            "**Уровень 40+** (🔰 Junior Moderator): `/warn` `/warnings` `/mute` `/unmute` `/timeout` "
+            "`/untimeout` `/clear` `/poll` `/event`\n"
+            "**Уровень 50+** (🛡️ Moderator): `/lock` `/unlock` `/slowmode`\n"
+            "**Уровень 60+** (🌀 Senior Moderator): `/kick` `/unwarn`\n"
+            "**Уровень 70+** (🔹 Admin): `/ban` `/unban`, логи, апелляции\n\n"
+            "• Всегда указывайте понятную причину — её видит нарушитель.\n"
+            "• Нельзя наказывать сотрудников своего уровня и выше.\n"
+            "• Лимит банов и киков за 10 минут — при превышении администрация получает тревогу.\n"
+            "• 3 активных варна = автоматический бан на 30 дней.")
+    elif key == "punishments":
+        embed.description = "\n".join(f"`{r.number}` **{r.title}** — {r.punishment}" for r in RULES)
+        embed.description += "\n\nСроки для `/mute`: `30м`, `2ч`, `1д`. Для `/ban`: `7д`, пусто — навсегда."
+    elif key == "tickets":
+        embed.description = (
+            "• Нажмите **«Принять»**, чтобы участник видел, кто им занимается.\n"
+            "• Отвечайте вежливо и по существу, не обещайте того, что не можете сделать.\n"
+            "• Нужна помощь коллеги — **«Добавить сотрудника»**.\n"
+            "• Закрывайте тикет с причиной: транскрипт сохранится в логах и уйдёт автору в ЛС.\n"
+            "• Апелляции и вопросы администрации видят только 🔹 Admin и выше.")
+    elif key == "shop":
+        embed.description = (
+            "Подтверждают оплату только 🛒 **Shop Manager** и 🔷 **Head Admin**+.\n\n"
+            "`1` Покупка автоматически открывает тикет заказа с товаром и ценой.\n"
+            "`2` Согласуйте способ оплаты **только в тикете**.\n"
+            "`3` Убедитесь, что деньги **реально пришли**. Скриншот от покупателя — не доказательство.\n"
+            "`4` **«Подтвердить оплату»** — в комментарии укажите способ проверки, **без реквизитов**.\n"
+            "`5` Бот выдаст роль сам, срок — 30 дней, затем снимет её автоматически.\n\n"
+            "❌ Нельзя подтверждать свой собственный заказ. История — `/orders`.")
+    elif key == "logs":
+        embed.description = (
+            "Категория **📜 Логи** видна 🔹 Admin и выше:\n"
+            "📥 вход-выход · ✅ собеседования · 🎭 роли · 🎫 тикеты (с транскриптами) · 💳 покупки · "
+            "🔨 наказания и автомод · ✏️ сообщения · ⚙️ сервер\n\n"
+            "Пароли, токены и номера карт в логах автоматически скрываются.\n"
+            "База бэкапится в канал бэкапов каждые 30 минут, вручную — `/backup`.")
+    elif key == "admin":
+        embed.description = (
+            "`/setup` — DRY RUN (план), APPLY (создать недостающее), RESET (удалить созданное ботом)\n"
+            "`/config show` — текущие привязки ролей и каналов\n"
+            "`/config link_role` / `link_channel` — привязать существующие объекты\n"
+            "`/config set` — параметры (выдача Member после обзвона, прощания)\n"
+            "`/panel` — переопубликовать панель · `/announce` — объявление · `/backup` — бэкап\n"
+            "`/suggestion_status` — ответ на предложение")
+    return embed
+
+
+class StaffMemoSelect(discord.ui.Select):
+    def __init__(self):
+        options = [discord.SelectOption(label=name, value=key, emoji=emoji, description=desc)
+                   for key, (emoji, name, desc) in STAFF_SECTIONS.items()]
+        super().__init__(placeholder="🧊 Раздел памятки персонала", options=options, custom_id="polari:staffmemo")
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        reg = interaction.client.registry  # type: ignore[attr-defined]
+        member = interaction.user
+        is_staff = isinstance(member, discord.Member) and (
+            await reg.member_level(member) > 0
+            or any([await reg.has_role_key(member, k) for k in ("support", "shop_staff", "checker", "staff")]))
+        if not is_staff:
+            await interaction.response.send_message(embed=style.error("Памятка доступна только персоналу."),
+                                                    ephemeral=True)
+            return
+        await interaction.response.send_message(embed=staff_section(self.values[0]), ephemeral=True)
+
+
+class StaffMemoView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(StaffMemoSelect())
+
+
 class InfoCog(commands.Cog):
     def __init__(self, bot: "PolariBot"):
         self.bot = bot
@@ -108,21 +208,39 @@ class InfoCog(commands.Cog):
     async def cog_load(self) -> None:
         self.bot.add_view(MemoView(self))
         self.bot.add_view(RulesView())
+        self.bot.add_view(StaffMemoView())
         setup_cog = self.bot.get_cog("SetupCog")
-        setup_cog.register_panel("memo", self.post_memo)    # type: ignore[union-attr]
-        setup_cog.register_panel("rules", self.post_rules)  # type: ignore[union-attr]
+        setup_cog.register_panel("memo", self.post_memo)              # type: ignore[union-attr]
+        setup_cog.register_panel("rules", self.post_rules)            # type: ignore[union-attr]
+        setup_cog.register_panel("staff_memo", self.post_staff_memo)  # type: ignore[union-attr]
+        setup_cog.register_panel("news", self.post_news)              # type: ignore[union-attr]
 
     # ------------------------------------------------------------------ памятка
     async def post_memo(self, channel: discord.TextChannel) -> discord.Message:
         lines = "\n".join(f"{emoji} **{name}** — {desc.lower()}." for emoji, name, desc in MEMO_SECTIONS.values())
-        embed = style.base("Памятка по серверу", (
-            f"Меню ниже поможет быстро познакомиться с **POLARI**.\n{style.DIVIDER}\n{lines}\n{style.DIVIDER}"),
-            color=style.Colors.PRIMARY, emoji="📑")
-        embed, file = style.with_banner(embed)
-        kwargs = {"embed": embed, "view": MemoView(self)}
-        if file:
-            kwargs["file"] = file
-        return await channel.send(**kwargs)
+        embed = style.header("Памятка по серверу", (
+            f"Меню ниже поможет быстро ознакомиться с сервером.\n\n{lines}"), style.Colors.SECONDARY)
+        embed.set_footer(text="Выберите интересующий раздел ниже ❄️")
+        return await style.send_panel(channel, "memo", [embed], view=MemoView(self))
+
+    # ------------------------------------------------------------------ памятка персонала
+    async def post_staff_memo(self, channel: discord.TextChannel) -> discord.Message:
+        lines = "\n".join(f"{emoji} **{name}** — {desc.lower()}." for emoji, name, desc in STAFF_SECTIONS.values())
+        embed = style.header("Памятка для персонала", (
+            "Всё, что нужно знать сотруднику POLARI: порядок работы, команды и правила.\n\n"
+            f"{lines}\n\n> Действия персонала записываются в логи. Злоупотребление полномочиями — снятие с поста."),
+            style.Colors.PRIMARY)
+        embed.set_footer(text="Выберите раздел ниже — ответ увидите только вы")
+        return await style.send_panel(channel, "staff_memo", [embed], view=StaffMemoView())
+
+    async def post_news(self, channel: discord.TextChannel) -> discord.Message:
+        embed = style.header("Добро пожаловать", (
+            "Здесь публикуются новости, обновления и анонсы сервера **POLARI**.\n\n"
+            "📑 Начните с памятки — там всё о сервере.\n"
+            "📘 Ознакомьтесь с правилами.\n"
+            "💎 Поддержать сервер можно в магазине.\n"
+            "🎫 Вопросы — через тикет в поддержке."), style.Colors.SECONDARY)
+        return await style.send_panel(channel, "news", [embed])
 
     async def memo_section(self, guild: discord.Guild, key: str) -> discord.Embed:
         emoji, name, _ = MEMO_SECTIONS[key]
@@ -158,9 +276,7 @@ class InfoCog(commands.Cog):
 
     # ------------------------------------------------------------------ правила
     async def post_rules(self, channel: discord.TextChannel) -> discord.Message:
-        intro = style.base("Правила сервера", RULES_INTRO, color=style.Colors.PRIMARY, emoji="📘")
-        intro, file = style.with_banner(intro)
-        await (channel.send(embed=intro, file=file) if file else channel.send(embed=intro))
+        await style.send_panel(channel, "rules", [style.header("Правила сервера", RULES_INTRO, style.Colors.PRIMARY)])
         rules = [rule_embed(r) for r in RULES]
         for i in range(0, len(rules), 10):
             await channel.send(embeds=rules[i:i + 10])

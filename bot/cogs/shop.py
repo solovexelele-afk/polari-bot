@@ -49,15 +49,14 @@ class ShopCog(commands.Cog):
 
     # ------------------------------------------------------------------ витрина
     async def post_panel(self, channel: discord.TextChannel) -> discord.Message:
-        header = style.base("Магазин", (
+        header = style.header("Магазин", (
             "Хотите поддержать **POLARI** и выделиться? Выберите товар и нажмите **«Купить»**.\n"
             f"{style.THIN}\n"
             "**`1`** Бот откроет приватный тикет заказа.\n"
             "**`2`** Сотрудник магазина согласует с вами способ оплаты.\n"
             "**`3`** После подтверждения оплаты роль выдаётся автоматически.\n"
             f"{style.THIN}\n> Никогда не платите людям вне тикета заказа — это мошенники."),
-            color=style.Colors.PRIMARY, emoji="💎")
-        header, file = style.with_banner(header)
+            style.Colors.PRIMARY)
         embeds = [header]
         for item in SHOP_ITEMS:
             card = discord.Embed(title=f"{item.emoji}  {item.name}", description=item.description,
@@ -66,10 +65,7 @@ class ShopCog(commands.Cog):
             if item.custom:
                 card.add_field(name="Особенность", value="Название и цвет выбираете вы")
             embeds.append(card)
-        kwargs = {"embeds": embeds[:10], "view": ShopView(self)}
-        if file:
-            kwargs["file"] = file
-        return await channel.send(**kwargs)
+        return await style.send_panel(channel, "shop", embeds[:9], view=ShopView(self))
 
     # ------------------------------------------------------------------ заказы
     async def create_order(self, interaction: discord.Interaction, item: ShopItem,

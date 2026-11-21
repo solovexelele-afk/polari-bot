@@ -79,14 +79,10 @@ class InterviewCog(commands.Cog):
         )
 
     async def post_info_panel(self, channel: discord.TextChannel) -> discord.Message:
-        embed = style.base("Как попасть на сервер", f"Добро пожаловать в **POLARI** ❄️\n\n{self._instruction()}",
-                           color=style.Colors.PRIMARY, emoji="📋")
-        embed, file = style.with_banner(embed)
-        view = await self._links(channel.guild)
-        kwargs = {"embed": embed, "view": view}
-        if file:
-            kwargs["file"] = file
-        return await channel.send(**kwargs)
+        embed = style.header("Как получить доступ", (
+            f"Добро пожаловать на **POLARI** ❄️\nДоступ к серверу выдаётся после короткого голосового "
+            f"собеседования с проверяющим.\n\n{self._instruction()}"), style.Colors.PRIMARY)
+        return await style.send_panel(channel, "info", [embed], view=await self._links(channel.guild))
 
     async def admin_panel_embed(self, guild: discord.Guild) -> discord.Embed:
         db = self.bot.db
@@ -104,7 +100,8 @@ class InterviewCog(commands.Cog):
         return embed
 
     async def post_admin_panel(self, channel: discord.TextChannel) -> discord.Message:
-        return await channel.send(embed=await self.admin_panel_embed(channel.guild), view=InterviewPanelView(self))
+        return await style.send_panel(channel, "interview", [await self.admin_panel_embed(channel.guild)],
+                                      view=InterviewPanelView(self))
 
     # ------------------------------------------------------------------ события
     @commands.Cog.listener()
@@ -136,12 +133,9 @@ class InterviewCog(commands.Cog):
                 f"короткое **голосовое собеседование** с проверяющим.\n\n{self._instruction()}"),
                 color=style.Colors.SECONDARY, emoji="👋")
             embed.set_thumbnail(url=member.display_avatar.url)
-            embed, file = style.with_banner(embed)
-            kwargs = {"content": member.mention, "embed": embed, "view": await self._links(guild)}
-            if file:
-                kwargs["file"] = file
             try:
-                await channel.send(**kwargs)
+                await style.send_panel(channel, "welcome", [embed], view=await self._links(guild),
+                                       content=member.mention)
             except discord.HTTPException as exc:
                 log.warning("Приветствие не отправлено: %s", exc)
 

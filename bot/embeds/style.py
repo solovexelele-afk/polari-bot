@@ -71,6 +71,41 @@ def with_banner(embed: discord.Embed) -> tuple[discord.Embed, discord.File | Non
     return embed, file
 
 
+BANNER_DIR = settings.banner_path.parent
+
+
+def banner(key: str, color: int = Colors.SECONDARY) -> tuple[discord.Embed | None, discord.File | None]:
+    """Отдельный Embed-баннер (картинка сверху сообщения, как на TENDERLE) и файл для вложения."""
+    path = BANNER_DIR / f"{key}.png"
+    if not path.exists():
+        return None, None
+    embed = discord.Embed(color=color)
+    embed.set_image(url=f"attachment://{key}.png")
+    return embed, discord.File(path, filename=f"{key}.png")
+
+
+async def send_panel(channel: discord.abc.Messageable, banner_key: str, embeds: list[discord.Embed],
+                     view: discord.ui.View | None = None, content: str | None = None,
+                     allowed_mentions: discord.AllowedMentions | None = None) -> discord.Message:
+    """Публикует панель: баннер + Embed'ы + компоненты одним сообщением."""
+    head, file = banner(banner_key, embeds[0].color.value if embeds and embeds[0].color else Colors.SECONDARY)
+    kwargs: dict = {"embeds": ([head] if head else []) + embeds}
+    if file:
+        kwargs["file"] = file
+    if view is not None:
+        kwargs["view"] = view
+    if content:
+        kwargs["content"] = content
+    if allowed_mentions:
+        kwargs["allowed_mentions"] = allowed_mentions
+    return await channel.send(**kwargs)
+
+
+def header(text: str, description: str = "", color: int = Colors.SECONDARY) -> discord.Embed:
+    """Embed-заголовок в стиле «POLARI | ПАМЯТКА ПО СЕРВЕРУ» без таймстампа."""
+    return discord.Embed(title=f"{settings.brand}  |  {text.upper()}", description=description, color=color)
+
+
 def ts(dt: datetime | str | None, style: str = "f") -> str:
     """Discord-таймстамп, отображаемый в часовом поясе читателя."""
     if dt is None:

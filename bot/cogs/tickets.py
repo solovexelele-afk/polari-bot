@@ -171,16 +171,12 @@ class TicketsCog(commands.Cog):
 
     async def post_panel(self, channel: discord.TextChannel) -> discord.Message:
         lines = "\n".join(f"{t.emoji} **{t.label}** — {t.description}" for t in TICKET_TYPES)
-        embed = style.base("Поддержка", (
+        embed = style.header("Поддержка сервера", (
             "Нужна помощь? Откройте приватный тикет — его увидите только вы и ответственная команда.\n"
             f"{style.DIVIDER}\n{lines}\n{style.DIVIDER}\n"
             "> Не создавайте тикеты без причины: за спам тикетами выдаётся наказание."),
-            color=style.Colors.PRIMARY, emoji="🎫")
-        embed, file = style.with_banner(embed)
-        kwargs = {"embed": embed, "view": TicketPanelView()}
-        if file:
-            kwargs["file"] = file
-        return await channel.send(**kwargs)
+            style.Colors.PRIMARY)
+        return await style.send_panel(channel, "tickets", [embed], view=TicketPanelView())
 
     @app_commands.command(name="ticket", description="Открыть обращение в поддержку POLARI")
     @app_commands.guild_only()
