@@ -167,7 +167,11 @@ class MusicCog(commands.Cog):
             log.exception("Ошибка запуска музыки")
             await self._reply(interaction, style.error(f"Не удалось включить: {exc}"))
             return
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(2)
+        if started and not (player.voice and player.voice.is_playing() and player.current):
+            await self._reply(interaction, style.error(
+                "Источник не воспроизводится: ссылка недоступна или это не аудио. Попробуйте другую станцию или файл."))
+            return
         if started:
             await self._reply(interaction, self.now_playing(player), view=self.controls(player.channel_id or 0),
                               ephemeral=False)
@@ -247,7 +251,7 @@ class MusicCog(commands.Cog):
             text = "Музыка остановлена, бот вышел из канала ⏹️"
         elif action in ("volume", "volup", "voldown"):
             target = value if action == "volume" else player.volume + (15 if action == "volup" else -15)
-            player.set_volume(int(target or 60))
+            await player.set_volume(int(target or 60))
             text = f"Громкость: **{player.volume}%**"
         await self._reply(interaction, style.base("Музыка", text or "Готово", emoji="🎵"),
                           ephemeral=action not in ("stop",))

@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import time
+import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,7 +20,7 @@ import discord
 
 log = logging.getLogger("polari.music")
 BASE_DIR = Path(__file__).resolve().parents[2]
-BEFORE_OPTIONS = "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin"
+USER_AGENT = "Mozilla/5.0 (POLARI Discord bot)"
 IDLE_LEAVE_SECONDS = 60
 
 
@@ -48,6 +49,7 @@ class GuildPlayer:
     volume: int = 60            # проценты
     started_at: float = 0.0
     offset: float = 0.0         # для перезапуска с места при смене громкости
+    _stream: object | None = None
     _skip_after: int = 0         # сколько ближайших after-колбэков игнорировать (ручной stop)
 
     @property
@@ -75,20 +77,35 @@ class GuildPlayer:
             return vc
         return await channel.connect(self_deaf=True, timeout=20, reconnect=True)
 
-    def _source(self, track: Track, seek: float = 0.0) -> discord.FFmpegOpusAudio:
-        exe = ffmpeg_path()
-        if not exe:
-            raise RuntimeError("ffmpeg не установлен на сервере бота.")
-        before = BEFORE_OPTIONS + (f" -ss {seek:.1f}" if seek and not track.live else "")
-        return discord.FFmpegOpusAudio(track.url, executable=exe, before_options=before,
-                                       options=f"-vn -filter:a volume={self.volume / 100:.2f}")
+    @staticmethod
+    def _open(url: str):
+        """Открывает поток в Python. ffmpeg получает данные через stdin, а не по сети:
+        статическая сборка ffmpeg на Render падает (SIGSEGV) при сетевых запросах."""
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Icy-MetaData": "0"})
+        return urllib.request.urlopen(request, timeout=15)
 
-    def _start(self, track: Track, seek: float = 0.0) -> None:
+    def _close_stream(self) -> None:
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            try:
+                stream.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+    async def _start(self, track: Track, seek: float = 0.0) -> None:
         vc = self.voice
         if not vc:
             return
+        exe = ffmpeg_path()
+        if not exe:
+            raise RuntimeError("ffmpeg не установлен на сервере бота.")
+        stream = await asyncio.to_thread(self._open, track.url)
+        self._close_stream()
+        self._stream = stream
+        before = f"-ss {seek:.1f}" if seek and not track.live else ""
+        source = discord.FFmpegOpusAudio(stream, pipe=True, executable=exe, before_options=before or None,
+                                         options=f"-vn -filter:a volume={self.volume / 100:.2f}")
         loop = self.client.loop
-        source = self._source(track, seek)
         self.current, self.offset, self.started_at = track, seek, time.monotonic()
         vc.play(source, after=lambda err: loop.call_soon_threadsafe(self._after, err))
 
@@ -98,20 +115,21 @@ class GuildPlayer:
         if self._skip_after > 0:
             self._skip_after -= 1
             return
-        self.play_next()
+        self.client.loop.create_task(self.play_next())
 
-    def play_next(self) -> None:
-        if not self.queue:
-            self.current, self.started_at, self.offset = None, 0.0, 0.0
-            self.client.loop.create_task(self.refresh_presence())
+    async def play_next(self) -> None:
+        while self.queue:
+            track = self.queue.popleft()
+            try:
+                await self._start(track)
+            except Exception as exc:
+                log.warning("Не удалось запустить «%s»: %s", track.title, exc)
+                continue
+            await self.refresh_presence()
             return
-        try:
-            self._start(self.queue.popleft())
-        except Exception:
-            log.exception("Не удалось запустить трек")
-            self.play_next()
-            return
-        self.client.loop.create_task(self.refresh_presence())
+        self._close_stream()
+        self.current, self.started_at, self.offset = None, 0.0, 0.0
+        await self.refresh_presence()
 
     async def enqueue(self, track: Track, *, now: bool = False) -> bool:
         """Добавляет трек. now=True — заменить текущий (радио). Возвращает True, если заиграл сразу."""
@@ -125,18 +143,22 @@ class GuildPlayer:
         else:
             self.queue.append(track)
         if vc and not vc.is_playing() and not vc.is_paused():
-            self.play_next()
-            return True
+            await self.play_next()
+            return self.current is track
         return now
 
-    def set_volume(self, percent: int) -> None:
+    async def set_volume(self, percent: int) -> None:
         self.volume = max(5, min(150, percent))
         vc, track = self.voice, self.current
         if vc and track and (vc.is_playing() or vc.is_paused()):
             seek = self.elapsed()
             self._skip_after += 1
             vc.stop()
-            self._start(track, seek)
+            try:
+                await self._start(track, seek)
+            except Exception as exc:
+                log.warning("Не удалось сменить громкость: %s", exc)
+                await self.play_next()
 
     async def stop(self) -> None:
         self.queue.clear()
@@ -147,6 +169,7 @@ class GuildPlayer:
                 self._skip_after += 1
                 vc.stop()
             await vc.disconnect(force=True)
+        self._close_stream()
         await self.refresh_presence()
 
     async def refresh_presence(self) -> None:
