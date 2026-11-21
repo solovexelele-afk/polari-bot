@@ -151,7 +151,8 @@ class SetupCog(commands.Cog):
                 item.action, item.note = "doubt", "категория под вопросом — сначала привяжите её"
             plan.items.append(item)
 
-        plan.removals = await self._find_unused(guild, plan)
+        # Автоудаление пустых лишних каналов отключено по просьбе владельца: чужие каналы не трогаем.
+        # Включить обратно: plan.removals = await self._find_unused(guild, plan)
 
         # Панели: публикуем только те, которых ещё нет
         for panel_key, channel_key in PANEL_CHANNELS.items():
@@ -228,8 +229,8 @@ class SetupCog(commands.Cog):
         embeds = []
         head = style.base("План настройки" if not applied else "Настройка применена",
                           ("Режим **DRY RUN**: ничего не изменено.\n" if not applied else "") +
-                          "Каналы раскладываются по категориям в порядке шаблона. Удаляются только пустые "
-                          "каналы вне шаблона (без сообщений и людей). Ваши роли не переименовываются.\n"
+                          "Каналы раскладываются по категориям в порядке шаблона. Каналы вне шаблона "
+                          "не удаляются и не изменяются. Ваши роли не переименовываются.\n"
                           "Сомнительные совпадения можно привязать командой `/config link`.",
                           color=style.Colors.PRIMARY, emoji="🛠️")
         head.add_field(name="Удалить пустых", value=str(len(plan.removals)))
