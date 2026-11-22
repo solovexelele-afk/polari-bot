@@ -65,14 +65,71 @@ class LevelsCog(commands.Cog):
         self._last_msg: dict[tuple[int, int], float] = {}
 
     async def cog_load(self) -> None:
+        self.bot.add_view(LeaderboardView(self))
+        self.bot.get_cog("SetupCog").register_panel("leaderboard", self.post_leaderboard)  # type: ignore[union-attr]
         self.voice_loop.start()
+        self.refresh_loop.start()
 
     async def cog_unload(self) -> None:
         self.voice_loop.cancel()
+        self.refresh_loop.cancel()
+
+    # ------------------------------------------------------------------ канал рейтинга
+    async def board_embed(self, guild: discord.Guild) -> discord.Embed:
+        db = self.bot.db
+        top_xp = await db.fetchall("SELECT * FROM levels WHERE guild_id=? ORDER BY xp DESC LIMIT 10", (guild.id,))
+        top_voice = await db.fetchall("SELECT * FROM levels WHERE guild_id=? AND voice_seconds>0 "
+                                      "ORDER BY voice_seconds DESC LIMIT 5", (guild.id,))
+        total = await db.fetchval("SELECT COUNT(*) FROM levels WHERE guild_id=?", (guild.id,), 0)
+        medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+        xp_lines = [f"{medals.get(i, f'`#{i}`')} <@{r['user_id']}> — ур. **{r['level']}** · {r['xp']} опыта · "
+                    f"{r['waffles']} {WAFFLE}" for i, r in enumerate(top_xp, 1)]
+        voice_lines = [f"{medals.get(i, f'`#{i}`')} <@{r['user_id']}> — 🎙️ {fmt_voice(r['voice_seconds'])}"
+                       for i, r in enumerate(top_voice, 1)]
+        embed = style.header("Топ рейтинга участников", (
+            "Опыт начисляется за общение в чатах и за время в голосовых каналах.\n"
+            f"Каждый новый уровень — награда в вафлях {WAFFLE}. Свой профиль — `/rank` во флуде.\n\n"
+            "**🏆 По опыту**\n" + ("\n".join(xp_lines) or "Пока пусто — начните общаться!") +
+            "\n\n**🎙️ По голосу**\n" + ("\n".join(voice_lines) or "Пока пусто.")), style.Colors.SECONDARY)
+        embed.set_footer(text=f"Участников в рейтинге: {total} · обновляется каждые 5 минут")
+        embed.timestamp = discord.utils.utcnow()
+        return embed
+
+    async def post_leaderboard(self, channel: discord.TextChannel) -> discord.Message:
+        return await style.send_panel(channel, "leaderboard", [await self.board_embed(channel.guild)],
+                                      view=LeaderboardView(self))
+
+    @tasks.loop(minutes=5)
+    async def refresh_loop(self) -> None:
+        for guild in self.bot.guilds:
+            row = await self.bot.db.fetchone("SELECT channel_id, message_id FROM panels WHERE guild_id=? AND key=?",
+                                             (guild.id, "leaderboard"))
+            channel = guild.get_channel(row["channel_id"]) if row else None
+            if not isinstance(channel, discord.TextChannel):
+                continue
+            try:
+                message = channel.get_partial_message(row["message_id"])
+                await message.edit(embeds=[await self.board_embed(guild)], view=LeaderboardView(self))
+            except discord.NotFound:
+                continue
+            except discord.HTTPException as exc:
+                log.warning("Топ не обновлён: %s", exc)
+
+    @refresh_loop.before_loop
+    async def _ready_refresh(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def in_flood(self, interaction: discord.Interaction) -> bool:
+        """Команды рейтинга работают только во флуде (если канал флуда настроен)."""
+        flood_id = await self.bot.registry.get(interaction.guild_id, "channel.flood")  # type: ignore[arg-type]
+        if not flood_id or str(interaction.channel_id) == flood_id:
+            return True
+        await interaction.response.send_message(embed=style.error(
+            f"Команды рейтинга работают только в <#{flood_id}>."), ephemeral=True)
+        return False
 
     # ------------------------------------------------------------------ начисление
-    async def add(self, member: discord.Member, *, xp: int = 0, messages: int = 0, voice: int = 0,
-                  announce_in: discord.abc.Messageable | None = None) -> None:
+    async def add(self, member: discord.Member, *, xp: int = 0, messages: int = 0, voice: int = 0) -> None:
         db = self.bot.db
         await db.execute(
             "INSERT INTO levels (guild_id,user_id,xp,messages,voice_seconds) VALUES (?,?,?,?,?) "
@@ -87,12 +144,13 @@ class LevelsCog(commands.Cog):
         reward = sum(10 * lvl for lvl in range(row["level"] + 1, new_level + 1))
         await db.execute("UPDATE levels SET level=?, waffles=waffles+? WHERE guild_id=? AND user_id=?",
                          (new_level, reward, member.guild.id, member.id))
-        target = announce_in or await self.bot.registry.text(member.guild, "chat")
+        target = await self.bot.registry.text(member.guild, "leaderboard") \
+            or await self.bot.registry.text(member.guild, "flood")
         if target is None:
             return
         embed = style.base("Новый уровень", (
             f"Ура! {member.mention} достиг **{new_level}** уровня! 🎉\nНаграда: **+{reward} {WAFFLE}**"),
-            color=style.Colors.ACCENT, emoji="⬆️", timestamp=False)
+            color=style.Colors.ACCENT, emoji="⬆️")
         embed.set_thumbnail(url=member.display_avatar.url)
         try:
             await target.send(embed=embed, allowed_mentions=discord.AllowedMentions(users=False))
@@ -108,8 +166,7 @@ class LevelsCog(commands.Cog):
         give_xp = now - self._last_msg.get(key, 0) >= MSG_COOLDOWN
         if give_xp:
             self._last_msg[key] = now
-        await self.add(message.author, xp=random.randint(*MSG_XP) if give_xp else 0, messages=1,
-                       announce_in=message.channel)
+        await self.add(message.author, xp=random.randint(*MSG_XP) if give_xp else 0, messages=1)
 
     @tasks.loop(minutes=1)
     async def voice_loop(self) -> None:
@@ -145,6 +202,8 @@ class LevelsCog(commands.Cog):
     @app_commands.command(name="rank", description="Уровень, опыт, вафли и активность участника")
     @app_commands.guild_only()
     async def rank(self, interaction: discord.Interaction, user: discord.Member | None = None) -> None:
+        if not await self.in_flood(interaction):
+            return
         member = user or interaction.user
         assert isinstance(member, discord.Member)
         row = await self.stats(member.guild.id, member.id)
@@ -165,6 +224,8 @@ class LevelsCog(commands.Cog):
     @app_commands.choices(sort=[app_commands.Choice(name=v[0], value=k) for k, v in SORTS.items()])
     @app_commands.guild_only()
     async def top(self, interaction: discord.Interaction, sort: app_commands.Choice[str] | None = None) -> None:
+        if not await self.in_flood(interaction):
+            return
         view = TopView(self, interaction.user.id, sort.value if sort else "xp")
         await interaction.response.send_message(embed=await view.render(interaction.guild), view=view)  # type: ignore[arg-type]
 
@@ -173,6 +234,8 @@ class LevelsCog(commands.Cog):
     @app_commands.checks.cooldown(1, 30)
     async def waffles_pay(self, interaction: discord.Interaction, user: discord.Member,
                           amount: app_commands.Range[int, 1, 1_000_000]) -> None:
+        if not await self.in_flood(interaction):
+            return
         if user.bot or user.id == interaction.user.id:
             await interaction.response.send_message(embed=style.error("Так перевести нельзя."), ephemeral=True)
             return
@@ -188,6 +251,51 @@ class LevelsCog(commands.Cog):
                          "DO UPDATE SET waffles=waffles+excluded.waffles", (interaction.guild_id, user.id, amount))
         await interaction.response.send_message(embed=style.success(
             "Перевод вафель", f"{interaction.user.mention} → {user.mention}: **{amount} {WAFFLE}**"))
+
+
+class LeaderboardView(discord.ui.View):
+    """Постоянные кнопки под топом: открыть свою таблицу (видна только вам) и свой профиль."""
+
+    def __init__(self, cog: LevelsCog):
+        super().__init__(timeout=None)
+        self.cog = cog
+
+    async def _open(self, interaction: discord.Interaction, sort: str) -> None:
+        view = TopView(self.cog, interaction.user.id, sort)
+        await interaction.response.send_message(embed=await view.render(interaction.guild), view=view,  # type: ignore[arg-type]
+                                                ephemeral=True)
+
+    @discord.ui.button(label="Опыт", emoji="🏆", style=discord.ButtonStyle.secondary, custom_id="polari:lb:xp")
+    async def by_xp(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._open(interaction, "xp")
+
+    @discord.ui.button(label="Голос", emoji="🎙️", style=discord.ButtonStyle.secondary, custom_id="polari:lb:voice")
+    async def by_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._open(interaction, "voice")
+
+    @discord.ui.button(label="Чат", emoji="💬", style=discord.ButtonStyle.secondary, custom_id="polari:lb:chat")
+    async def by_chat(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._open(interaction, "chat")
+
+    @discord.ui.button(label="Вафли", emoji=WAFFLE, style=discord.ButtonStyle.secondary, custom_id="polari:lb:waffles")
+    async def by_waffles(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await self._open(interaction, "waffles")
+
+    @discord.ui.button(label="Мой профиль", emoji="📊", style=discord.ButtonStyle.primary, custom_id="polari:lb:me")
+    async def me(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        member = interaction.user
+        row = await self.cog.stats(interaction.guild_id, member.id)  # type: ignore[arg-type]
+        xp = row["xp"] if row else 0
+        level, inside, need = level_from_xp(xp)
+        embed = style.base("Мой профиль", member.mention, color=style.Colors.SECONDARY, emoji="📊", timestamp=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="Уровень", value=f"**{level}**")
+        embed.add_field(name="Место", value=f"#{await self.cog.position(interaction.guild_id, 'xp', xp)}")  # type: ignore[arg-type]
+        embed.add_field(name="Вафли", value=f"**{row['waffles'] if row else 0}** {WAFFLE}")
+        embed.add_field(name=f"Опыт · {inside}/{need}", value=f"`{progress_bar(inside, need)}`", inline=False)
+        embed.add_field(name="🎙️ В голосе", value=fmt_voice(row["voice_seconds"] if row else 0))
+        embed.add_field(name="💬 Сообщений", value=str(row["messages"] if row else 0))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class TopView(discord.ui.View):
