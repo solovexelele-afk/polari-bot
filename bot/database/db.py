@@ -121,6 +121,16 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_movie_polls ON movie_polls(guild_id, day);
     """,
+    # v3 — рейтинг: опыт, уровни, вафли, активность в чате и голосе
+    """
+    CREATE TABLE levels (
+        guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+        xp INTEGER NOT NULL DEFAULT 0, level INTEGER NOT NULL DEFAULT 0, waffles INTEGER NOT NULL DEFAULT 0,
+        messages INTEGER NOT NULL DEFAULT 0, voice_seconds INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    CREATE INDEX idx_levels_xp ON levels(guild_id, xp DESC);
+    """,
 ]
 
 

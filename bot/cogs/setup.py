@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -451,6 +453,63 @@ class SetupCog(commands.Cog):
         await self.bot.logs.send(guild, "setup", embed)
         return errors
 
+    # ------------------------------------------------------------------ бэкап структуры
+    async def snapshot(self, guild: discord.Guild, reason: str) -> bool:
+        """Сохраняет все категории, каналы и роли (названия, порядок, права) в JSON.
+
+        Файл кладётся в data/structure/ и отправляется в канал бэкапов и в ⚙️・сервер-лог.
+        """
+        def overwrites(ch: discord.abc.GuildChannel) -> list[dict]:
+            out = []
+            for target, ow in ch.overwrites.items():
+                allow, deny = ow.pair()
+                out.append({"id": target.id, "type": "role" if isinstance(target, discord.Role) else "member",
+                            "name": getattr(target, "name", ""), "allow": allow.value, "deny": deny.value})
+            return out
+
+        data = {
+            "guild": {"id": guild.id, "name": guild.name}, "reason": reason, "created_at": now_iso(),
+            "roles": [{"id": r.id, "name": r.name, "color": r.colour.value, "position": r.position,
+                       "permissions": r.permissions.value, "hoist": r.hoist, "mentionable": r.mentionable}
+                      for r in guild.roles],
+            "channels": [{"id": c.id, "name": c.name, "type": str(c.type), "position": c.position,
+                          "category_id": c.category_id, "topic": getattr(c, "topic", None),
+                          "slowmode": getattr(c, "slowmode_delay", None), "user_limit": getattr(c, "user_limit", None),
+                          "overwrites": overwrites(c)} for c in guild.channels],
+        }
+        payload = json.dumps(data, ensure_ascii=False, indent=1).encode("utf-8")
+        stamp = discord.utils.utcnow().strftime("%Y%m%d-%H%M%S")
+        name = f"structure-{guild.id}-{stamp}.json"
+        folder = self.bot.db.path.parent / "structure"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(payload)
+        sent = False
+        targets = [await self.bot.registry.text(guild, "log_server")]
+        backup_channel = await self.bot.hosting._backup_channel()
+        if backup_channel and backup_channel.guild.id == guild.id:
+            targets.append(backup_channel)
+        for channel in {t.id: t for t in targets if t}.values():
+            try:
+                await channel.send(content=f"🗂️ Бэкап структуры сервера · {reason} · каналов: {len(guild.channels)}, "
+                                           f"ролей: {len(guild.roles)}",
+                                   file=discord.File(io.BytesIO(payload), filename=name))
+                sent = True
+            except discord.HTTPException as exc:
+                log.warning("Бэкап структуры не отправлен в #%s: %s", channel, exc)
+        log.info("Бэкап структуры %s сохранён (%s)", name, reason)
+        return sent
+
+    @app_commands.command(name="structure_backup", description="Сохранить бэкап всех каналов и ролей сервера")
+    @app_commands.guild_only()
+    @require("config")
+    async def structure_backup(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        sent = await self.snapshot(interaction.guild, f"вручную, {interaction.user}")  # type: ignore[arg-type]
+        await interaction.followup.send(embed=style.success("Бэкап структуры", (
+            "Все категории, каналы, роли и права сохранены в JSON" +
+            (" и отправлены в канал логов/бэкапов." if sent else " на сервере бота (канал логов не найден)."))),
+            ephemeral=True)
+
     # ------------------------------------------------------------------ сброс
     async def collect_created(self, guild: discord.Guild) -> tuple[list[discord.Role], list[discord.abc.GuildChannel]]:
         """Всё, что создал бот: записи в БД + аудит-лог (создано пользователем-ботом)."""
@@ -575,6 +634,7 @@ class ConfirmResetView(discord.ui.View):
         await interaction.response.edit_message(embed=style.base("Сброс", "Удаляю созданное ботом…", emoji="⏳"),
                                                 view=None)
         async with self.cog._lock:
+            await self.cog.snapshot(interaction.guild, f"перед RESET, {interaction.user}")  # type: ignore[arg-type]
             ch, roles, errors = await self.cog.apply_reset(interaction.guild, interaction.user)  # type: ignore[arg-type]
         text = f"Удалено каналов: **{ch}**, ролей: **{roles}**.\nТеперь выполните `/setup` → APPLY."
         if errors:
@@ -621,6 +681,7 @@ class ConfirmSetupView(discord.ui.View):
                     "Сервер изменился", "С момента показа плана на сервере что-то изменилось. "
                     "Ничего не применено — запустите `/setup` ещё раз и проверьте новый план."), ephemeral=True)
                 return
+            await self.cog.snapshot(guild, f"перед APPLY, {interaction.user}")
             errors = await self.cog.apply_plan(guild, plan, interaction.user)
         embeds = self.cog.render_plan(plan, applied=True)
         if errors:
