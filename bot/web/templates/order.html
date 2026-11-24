@@ -1,0 +1,13 @@
+{% extends platform ~ "/base.html" %}
+{% block title %}Заказ #{{ order_id }}{% endblock %}
+{% block content %}
+<section class="page-head center">
+  <p class="eyebrow">Заказ #{{ order_id }}</p>
+  <h1>{{ item.emoji }} {{ item.name }} — заказ создан</h1>
+  <p class="lead">Мы открыли для вас приватный тикет в Discord. Сотрудник магазина напишет туда,
+    согласует оплату ({{ item.price }} {{ currency }}) и после подтверждения
+    {% if item.kind == "cs2" %}выдаст привилегию на сервере CS 2{% else %}бот сам выдаст роль{% endif %}.</p>
+  <a class="btn" href="{{ ticket_url }}">Открыть тикет в Discord</a>
+  <p class="note">Не переводите деньги никому вне этого тикета.</p>
+</section>
+{% endblock %}

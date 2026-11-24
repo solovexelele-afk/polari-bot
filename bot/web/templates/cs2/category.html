@@ -1,0 +1,26 @@
+{% extends "cs2/base.html" %}
+{% block title %}{{ cat.title }} — форум POLARI CS 2{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/cs2/forum">Форум</a> / {{ cat.title }}</nav>
+<section class="page-head"><h1>{{ cat.icon }} {{ cat.title }}</h1><p class="lead">{{ cat.description }}</p></section>
+<div class="forum">
+  {% for t in threads %}
+  <a class="forum-row" href="/cs2/forum/t/{{ t.id }}">
+    <img class="ava" src="{{ t.author_avatar }}" alt="">
+    <span class="forum-main"><b>{% if t.pinned %}📌 {% endif %}{% if t.locked %}🔒 {% endif %}{{ t.title }}</b>
+      <small>{{ t.author_name }} · {{ t.created_at|date }}</small></span>
+    <span class="forum-count"><b>{{ t.replies }}</b><small>ответов</small></span>
+    <span class="forum-last"><small>Обновлено</small>{{ t.updated_at|date }}</span>
+  </a>
+  {% else %}<p class="muted">В разделе пока нет тем.</p>{% endfor %}
+</div>
+{% if user and (not cat.staff_only or user.staff) %}
+<form method="post" action="/cs2/forum/{{ cat.slug }}/new" class="card compose">
+  <h2>Новая тема</h2>
+  <input type="hidden" name="csrf" value="{{ user.csrf }}">
+  <input name="title" maxlength="120" required placeholder="Заголовок">
+  <textarea name="content" rows="7" maxlength="8000" required placeholder="Опишите подробно. Для жалоб — ник нарушителя, время, сервер и доказательства (ссылки на видео/скриншоты)."></textarea>
+  <button class="btn">Создать тему</button>
+</form>
+{% elif not user %}<p class="muted center"><a href="/login?next={{ path }}">Войдите через Discord</a>, чтобы создать тему.</p>{% endif %}
+{% endblock %}

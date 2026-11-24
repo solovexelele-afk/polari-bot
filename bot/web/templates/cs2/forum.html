@@ -1,0 +1,17 @@
+{% extends "cs2/base.html" %}
+{% block title %}Форум — POLARI CS 2{% endblock %}
+{% block content %}
+<section class="page-head"><p class="eyebrow">Форум</p><h1>Сообщество проекта</h1>
+  <p class="lead">Жалобы, обжалования, заявки в команду и просто общение. Для публикации войдите через Discord.</p></section>
+<div class="forum">
+  {% for c in cats %}
+  <a class="forum-row" href="/cs2/forum/{{ c.slug }}">
+    <span class="forum-icon">{{ c.icon }}</span>
+    <span class="forum-main"><b>{{ c.title }}</b><small>{{ c.description }}</small></span>
+    <span class="forum-count"><b>{{ c.threads }}</b><small>тем</small></span>
+    <span class="forum-count"><b>{{ c.posts }}</b><small>сообщений</small></span>
+    <span class="forum-last">{% if c.last_title %}<small>Последняя тема</small>{{ c.last_title[:40] }}{% else %}<small>Пока пусто</small>{% endif %}</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

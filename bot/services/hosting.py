@@ -47,8 +47,10 @@ class HostingService:
             ready = self.bot.is_ready()
             return web.json_response({"status": "ok" if ready else "starting", "bot": str(self.bot.user or "")})
 
-        app.router.add_get("/", health)
         app.router.add_get("/health", health)
+        from bot.web.app import Site  # сайт POLARI работает на этом же порту
+
+        Site(self.bot).routes(app)
         self._runner = web.AppRunner(app, access_log=None)
         await self._runner.setup()
         await web.TCPSite(self._runner, "0.0.0.0", int(self.port)).start()

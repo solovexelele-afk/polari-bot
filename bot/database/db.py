@@ -131,6 +131,39 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_levels_xp ON levels(guild_id, xp DESC);
     """,
+    # v4 — сайт: форум, новости CS2, дополнительные данные заказа
+    """
+    CREATE TABLE forum_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
+        description TEXT, icon TEXT, position INTEGER NOT NULL DEFAULT 0, staff_only INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE forum_threads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER NOT NULL, title TEXT NOT NULL,
+        author_id INTEGER NOT NULL, author_name TEXT NOT NULL, author_avatar TEXT,
+        pinned INTEGER NOT NULL DEFAULT 0, locked INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, replies INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE forum_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id INTEGER NOT NULL, author_id INTEGER NOT NULL,
+        author_name TEXT NOT NULL, author_avatar TEXT, content TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE site_news (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, section TEXT NOT NULL DEFAULT 'cs2', title TEXT NOT NULL,
+        content TEXT NOT NULL, author_id INTEGER, author_name TEXT, created_at TEXT NOT NULL
+    );
+    ALTER TABLE orders ADD COLUMN extra TEXT;
+    ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'discord';
+    CREATE INDEX idx_threads_cat ON forum_threads(category_id, pinned DESC, updated_at DESC);
+    CREATE INDEX idx_posts_thread ON forum_posts(thread_id, id);
+    INSERT INTO forum_categories (slug,title,description,icon,position,staff_only) VALUES
+        ('announcements','Объявления','Важные новости проекта от администрации','📢',0,1),
+        ('general','Общение','Обсуждаем всё о проекте и CS 2','💬',1,0),
+        ('complaints','Жалобы на игроков','Читеры, оскорбления, нарушения правил','⚠️',2,0),
+        ('appeals','Обжалование наказаний','Если считаете бан несправедливым','⚖️',3,0),
+        ('staff-apply','Заявки в администрацию','Хотите в команду? Пишите здесь','🛡️',4,0),
+        ('suggestions','Предложения','Идеи по улучшению серверов','💡',5,0),
+        ('bugs','Баг-репорты','Нашли ошибку на сервере — сообщите','🐞',6,0);
+    """,
 ]
 
 

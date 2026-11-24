@@ -1,0 +1,27 @@
+{% extends "cs2/base.html" %}
+{% block title %}Новости — POLARI CS 2{% endblock %}
+{% block content %}
+<section class="page-head"><p class="eyebrow">Новости</p><h1>Что нового на серверах</h1></section>
+{% if user and user.staff %}
+<form method="post" action="/cs2/news" class="card compose">
+  <h2>Опубликовать новость</h2>
+  <input type="hidden" name="csrf" value="{{ user.csrf }}">
+  <input name="title" maxlength="150" required placeholder="Заголовок">
+  <textarea name="content" rows="6" maxlength="10000" required placeholder="Текст новости"></textarea>
+  <button class="btn">Опубликовать</button>
+</form>
+{% endif %}
+<div class="news-list">
+  {% for n in news %}
+  <article class="card news">
+    <time>{{ n.created_at|date }} · {{ n.author_name }}</time>
+    <h2>{{ n.title }}</h2>
+    <div class="post-body">{{ n.content|nl2br }}</div>
+    {% if user and user.staff %}
+    <form method="post" action="/cs2/news"><input type="hidden" name="csrf" value="{{ user.csrf }}">
+      <button class="link danger" name="delete_id" value="{{ n.id }}" onclick="return confirm('Удалить новость?')">удалить</button></form>
+    {% endif %}
+  </article>
+  {% else %}<p class="muted">Новостей пока нет.</p>{% endfor %}
+</div>
+{% endblock %}

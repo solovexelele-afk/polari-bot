@@ -1,0 +1,36 @@
+{% extends "polari/base.html" %}
+{% block title %}Магазин — POLARI{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Магазин</p>
+  <h1>Роли POLARI</h1>
+  <p class="lead">Поддержите сервер и выделитесь в списке участников. После нажатия «Купить» бот откроет
+    для вас приватный тикет в Discord — там сотрудник согласует оплату и роль выдастся автоматически.</p>
+  <p class="note">Платите только внутри тикета заказа. Администрация никогда не пишет первой в личные сообщения.</p>
+</section>
+<div class="cards shop">
+  {% for item in items %}
+  <article class="card item">
+    <div class="item-top"><span class="item-emoji">{{ item.emoji }}</span>
+      <span class="price">{{ "{:,}".format(item.price).replace(",", " ") }} {{ currency }}<small>{% if item.period_days %} / {{ item.period_days }} дн.{% else %} навсегда{% endif %}</small></span></div>
+    <h3>{{ item.name }}</h3>
+    <p>{{ item.description }}</p>
+    {% if user and user.member %}
+    <form method="post" action="/shop/buy" class="buy">
+      <input type="hidden" name="csrf" value="{{ user.csrf }}">
+      <input type="hidden" name="item_id" value="{{ item.id }}">
+      {% if item.custom %}
+        <label>Название роли<input name="custom_name" maxlength="32" required placeholder="Ледяной странник"></label>
+        <label>Цвет<input name="custom_color" type="color" value="#7fdbff"></label>
+      {% endif %}
+      <button class="btn">Купить</button>
+    </form>
+    {% elif user %}
+      <p class="muted">Чтобы купить, вступите на Discord-сервер{% if invite %}: <a href="{{ invite }}">войти</a>{% endif %}.</p>
+    {% else %}
+      <a class="btn" href="/login?next=/shop">Войти и купить</a>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}

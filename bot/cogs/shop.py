@@ -18,6 +18,10 @@ from bot.data.content import CURRENCY, SHOP_BY_ID, SHOP_ITEMS, ShopItem
 from bot.database.db import now_iso
 from bot.embeds import style
 from bot.services.tickets import TicketError
+
+
+class OrderError(Exception):
+    """Заказ не создан — текст можно показать покупателю."""
 from bot.utils.checks import ensure, require
 from bot.utils.helpers import parse_color, redact
 
@@ -72,20 +76,35 @@ class ShopCog(commands.Cog):
                            custom_name: str | None = None, custom_color: str | None = None) -> None:
         member = interaction.user
         assert isinstance(member, discord.Member)
+        try:
+            order_id, channel = await self.place_order(member, item, custom_name, custom_color)
+        except OrderError as exc:
+            await interaction.followup.send(embed=style.error(str(exc)), ephemeral=True)
+            return
+        await interaction.followup.send(embed=style.success("Заказ оформлен", (
+            f"Заказ **#{order_id}** создан. Перейдите в {channel.mention} — сотрудник магазина свяжется с вами.")),
+            ephemeral=True)
+
+    async def place_order(self, member: discord.Member, item: ShopItem, custom_name: str | None = None,
+                          custom_color: str | None = None, extra: str | None = None,
+                          source: str = "discord") -> tuple[int, discord.TextChannel]:
+        """Создаёт заказ и приватный тикет. Используется и Discord-магазином, и сайтом."""
         guild = member.guild
         db = self.bot.db
         pending = await db.fetchone("SELECT id FROM orders WHERE guild_id=? AND user_id=? AND item_id=? AND status='pending'",
                                     (guild.id, member.id, item.id))
         if pending:
-            await interaction.followup.send(embed=style.error(
-                f"У вас уже есть незавершённый заказ #{pending['id']} на этот товар."), ephemeral=True)
-            return
+            raise OrderError(f"У вас уже есть незавершённый заказ #{pending['id']} на этот товар.")
         now = now_iso()
         order_id = await db.execute(
-            "INSERT INTO orders (guild_id,user_id,item_id,item_name,price,custom_name,custom_color,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (guild.id, member.id, item.id, item.name, item.price, custom_name, custom_color, now, now))
+            "INSERT INTO orders (guild_id,user_id,item_id,item_name,price,custom_name,custom_color,extra,source,"
+            "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (guild.id, member.id, item.id, item.name, item.price, custom_name, custom_color, extra, source, now, now))
         intro = self.order_embed(member, item, order_id, custom_name, custom_color)
+        if extra:
+            intro.add_field(name="SteamID / ник в игре", value=extra[:200], inline=False)
+        if source == "site":
+            intro.add_field(name="Источник", value="🌐 Заказ оформлен на сайте", inline=False)
         try:
             channel, ticket_id = await self.bot.tickets.create(member, "purchase", f"Заказ #{order_id}: {item.name}",
                                                                intro=intro, view=OrderControlView(self))
@@ -93,8 +112,7 @@ class ShopCog(commands.Cog):
             await db.execute("UPDATE orders SET status='cancelled', updated_at=? WHERE id=?", (now_iso(), order_id))
             await db.execute("INSERT INTO payments (order_id,action,note,created_at) VALUES (?,?,?,?)",
                              (order_id, "ticket_failed", str(exc)[:200], now_iso()))
-            await interaction.followup.send(embed=style.error(f"Не удалось открыть тикет заказа: {exc}"), ephemeral=True)
-            return
+            raise OrderError(f"Не удалось открыть тикет заказа: {exc}") from exc
         await db.execute("UPDATE orders SET ticket_id=? WHERE id=?", (ticket_id, order_id))
         await db.execute("INSERT INTO payments (order_id,action,staff_id,note,created_at) VALUES (?,?,?,?,?)",
                          (order_id, "created", None, None, now_iso()))
@@ -107,9 +125,7 @@ class ShopCog(commands.Cog):
             await orders_channel.send(embed=style.base("Новый заказ", (
                 f"**#{order_id}** · {item.emoji} {item.name} · {price_text(item)}\n"
                 f"Покупатель: {member.mention} · Тикет: {channel.mention}"), color=style.Colors.ACCENT, emoji="🛒"))
-        await interaction.followup.send(embed=style.success("Заказ оформлен", (
-            f"Заказ **#{order_id}** создан. Перейдите в {channel.mention} — сотрудник магазина свяжется с вами.")),
-            ephemeral=True)
+        return order_id, channel
 
     def order_embed(self, member: discord.Member, item: ShopItem, order_id: int, custom_name: str | None,
                     custom_color: str | None) -> discord.Embed:
@@ -143,6 +159,9 @@ class ShopCog(commands.Cog):
         member = guild.get_member(order["user_id"])
         if not item or not member:
             await interaction.followup.send(embed=style.error("Товар или покупатель больше не найдены."), ephemeral=True)
+            return
+        if item.kind == "cs2":
+            await self._confirm_cs2(interaction, order, member, note)
             return
         created_role: discord.Role | None = None
         try:
@@ -195,6 +214,26 @@ class ShopCog(commands.Cog):
                                                   f"Заказ **#{order['id']}** ({order['item_name']}) на **{guild.name}** оплачен."))
         except discord.HTTPException:
             pass
+
+    async def _confirm_cs2(self, interaction: discord.Interaction, order, member: discord.Member, note: str) -> None:
+        """Привилегия CS 2 выдаётся на игровом сервере сотрудником; бот фиксирует оплату и срок."""
+        item = SHOP_BY_ID[order["item_id"]]
+        expires = (datetime.now(timezone.utc) + timedelta(days=item.period_days)).isoformat(timespec="seconds") \
+            if item.period_days else None
+        await self.bot.db.execute("UPDATE orders SET status='paid', handled_by=?, expires_at=?, updated_at=? WHERE id=?",
+                                  (interaction.user.id, expires, now_iso(), order["id"]))
+        await self.bot.db.execute("INSERT INTO payments (order_id,action,staff_id,note,created_at) VALUES (?,?,?,?,?)",
+                                  (order["id"], "confirmed", interaction.user.id, redact(note), now_iso()))
+        await interaction.channel.send(embed=style.success("Оплата подтверждена", (  # type: ignore[union-attr]
+            f"{member.mention}, спасибо! Привилегия **{order['item_name']}** будет выдана на сервере CS 2 "
+            f"для **{order['extra'] or 'указанного аккаунта'}**"
+            + (f" до {style.ts(expires, 'D')}." if expires else ".")
+            + f"\n{interaction.user.mention}, выдайте привилегию на игровом сервере и закройте тикет.")))
+        await self.bot.logs.send(interaction.guild, "payment", style.log_embed(  # type: ignore[arg-type]
+            "Оплата подтверждена (CS 2)", color=style.Colors.SUCCESS, emoji="🎮", fields=[
+                ("Заказ", f"#{order['id']}"), ("Покупатель", member.mention), ("Товар", order["item_name"]),
+                ("Сумма", f"{order['price']} {CURRENCY}"), ("SteamID", order["extra"] or "—"),
+                ("Подтвердил", interaction.user.mention), ("Комментарий", redact(note) or "—")]))
 
     async def set_order_status(self, interaction: discord.Interaction, order, status: str, action: str,
                                reason: str) -> None:

@@ -1,0 +1,38 @@
+{% extends "cs2/base.html" %}
+{% block content %}
+<section class="hero cs-hero">
+  <div class="hero-text">
+    <p class="eyebrow">Counter-Strike 2</p>
+    <h1>Серверы проекта<br><em>POLARI</em></h1>
+    <p class="lead">Честная игра, живая администрация и сообщество, которое играет вместе с 2025 года.</p>
+    <div class="actions">
+      {% if cs2_ip %}<button class="btn" onclick="navigator.clipboard.writeText('connect {{ cs2_ip }}');this.textContent='Скопировано ✓'">Скопировать IP</button>{% endif %}
+      <a class="ghost" href="/cs2/forum">Перейти на форум</a>
+    </div>
+    {% if cs2_ip %}<p class="ip">connect <code>{{ cs2_ip }}</code></p>{% endif %}
+  </div>
+</section>
+
+<div class="grid-2">
+  <section class="block">
+    <div class="block-head"><h2>Новости</h2><a href="/cs2/news">Все новости →</a></div>
+    {% for n in news %}
+      <article class="card news"><time>{{ n.created_at|date }}</time><h3>{{ n.title }}</h3>
+        <p>{{ n.content[:220] }}{% if n.content|length > 220 %}…{% endif %}</p></article>
+    {% else %}<p class="muted">Новостей пока нет.</p>{% endfor %}
+  </section>
+  <section class="block">
+    <div class="block-head"><h2>Свежее на форуме</h2><a href="/cs2/forum">Форум →</a></div>
+    <ul class="list">
+      {% for t in threads %}
+        <li><a href="/cs2/forum/t/{{ t.id }}"><span>{{ t.icon }} {{ t.title }}</span><small>{{ t.cat_title }} · {{ t.author_name }}</small></a></li>
+      {% else %}<li class="muted">Тем пока нет — создайте первую!</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+
+<section class="block">
+  <div class="block-head"><h2>Привилегии</h2><a href="/cs2/shop">Магазин →</a></div>
+  <div class="cards">{% for item in items %}{% include "cs2/_item.html" %}{% endfor %}</div>
+</section>
+{% endblock %}

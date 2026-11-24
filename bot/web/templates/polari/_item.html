@@ -1,0 +1,6 @@
+<article class="card item">
+  <div class="item-top"><span class="item-emoji">{{ item.emoji }}</span>
+    <span class="price">{{ "{:,}".format(item.price).replace(",", " ") }} {{ currency }}<small>{% if item.period_days %} / {{ item.period_days }} дн.{% else %} навсегда{% endif %}</small></span></div>
+  <h3>{{ item.name }}</h3>
+  <p>{{ item.description }}</p>
+</article>

@@ -1,0 +1,34 @@
+{% extends "cs2/base.html" %}
+{% block title %}{{ thread.title }} — форум POLARI CS 2{% endblock %}
+{% block content %}
+<nav class="crumbs"><a href="/cs2/forum">Форум</a> / <a href="/cs2/forum/{{ thread.slug }}">{{ thread.cat_title }}</a></nav>
+<section class="page-head"><h1>{% if thread.pinned %}📌 {% endif %}{% if thread.locked %}🔒 {% endif %}{{ thread.title }}</h1></section>
+{% if user and user.staff %}
+<form method="post" action="/cs2/forum/t/{{ thread.id }}/mod" class="mod-bar">
+  <input type="hidden" name="csrf" value="{{ user.csrf }}">
+  <button class="ghost sm" name="action" value="pin">{{ 'Открепить' if thread.pinned else 'Закрепить' }}</button>
+  <button class="ghost sm" name="action" value="lock">{{ 'Открыть' if thread.locked else 'Закрыть' }}</button>
+  <button class="ghost sm danger" name="action" value="delete" onclick="return confirm('Удалить тему целиком?')">Удалить тему</button>
+</form>
+{% endif %}
+<div class="posts">
+  {% for p in posts %}
+  <article class="card post"{% if loop.last %} id="last"{% endif %}>
+    <aside><img class="ava" src="{{ p.author_avatar }}" alt=""><b>{{ p.author_name }}</b></aside>
+    <div><time>{{ p.created_at|date }}</time><div class="post-body">{{ p.content|nl2br }}</div>
+      {% if user and user.staff and not loop.first %}
+      <form method="post" action="/cs2/forum/t/{{ thread.id }}/mod"><input type="hidden" name="csrf" value="{{ user.csrf }}">
+        <input type="hidden" name="post_id" value="{{ p.id }}"><button class="link danger" name="action" value="delete_post">удалить</button></form>
+      {% endif %}</div>
+  </article>
+  {% endfor %}
+</div>
+{% if user and (not thread.locked or user.staff) %}
+<form method="post" action="/cs2/forum/t/{{ thread.id }}/reply" class="card compose">
+  <input type="hidden" name="csrf" value="{{ user.csrf }}">
+  <textarea name="content" rows="5" maxlength="8000" required placeholder="Ваш ответ"></textarea>
+  <button class="btn">Ответить</button>
+</form>
+{% elif thread.locked %}<p class="muted center">Тема закрыта для ответов.</p>
+{% else %}<p class="muted center"><a href="/login?next={{ path }}">Войдите через Discord</a>, чтобы ответить.</p>{% endif %}
+{% endblock %}

@@ -20,3 +20,12 @@ services:
         sync: false
       - key: BACKUP_INTERVAL_MINUTES
         value: "30"
+      # --- сайт ---
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_INVITE
+        sync: false
+      - key: CS2_SERVER_IP
+        sync: false

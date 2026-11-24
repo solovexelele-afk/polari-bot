@@ -1,0 +1,43 @@
+{% extends "polari/base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="hero-text">
+    <p class="eyebrow">Discord-сервер</p>
+    <h1>Добро пожаловать<br>в <em>POLARI</em></h1>
+    <p class="lead">Тёплое общение в холодных тонах. Голосовые вечера, ивенты, рейтинг с вафлями 🧇
+      и своя команда в CS 2.</p>
+    <div class="actions">
+      {% if invite %}<a class="btn" href="{{ invite }}">Зайти на сервер</a>{% endif %}
+      <a class="ghost" href="/shop">Магазин ролей</a>
+    </div>
+    <dl class="stats">
+      <div><dt>{{ members }}</dt><dd>участников</dd></div>
+      <div><dt>{{ in_voice }}</dt><dd>сейчас в голосе</dd></div>
+      <div><dt>24/7</dt><dd>бот и поддержка</dd></div>
+    </dl>
+  </div>
+  <img class="hero-art" src="/banners/polari_banner.png" alt="POLARI">
+</section>
+
+<section class="block">
+  <h2>Как попасть на сервер</h2>
+  <ol class="steps">
+    <li><b>Зайдите</b> по приглашению и прочитайте правила.</li>
+    <li><b>Пройдите обзвон</b> — короткое голосовое знакомство с проверяющим.</li>
+    <li><b>Общайтесь</b> — копите опыт, поднимайте уровень, получайте вафли.</li>
+  </ol>
+</section>
+
+<section class="block">
+  <div class="block-head"><h2>Популярное в магазине</h2><a href="/shop">Все товары →</a></div>
+  <div class="cards">
+    {% for item in items %}{% include "polari/_item.html" %}{% endfor %}
+  </div>
+</section>
+
+<a class="cs2-teaser" href="/cs2">
+  <div><p class="eyebrow">Новая платформа</p><h2>Проект в CS 2</h2>
+    <p>Форум, привилегии, новости и администрация наших серверов Counter-Strike 2.</p></div>
+  <span class="arrow">→</span>
+</a>
+{% endblock %}

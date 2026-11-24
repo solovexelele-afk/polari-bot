@@ -1,0 +1,12 @@
+{% extends "cs2/base.html" %}
+{% block title %}Магазин привилегий — POLARI CS 2{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Магазин</p>
+  <h1>Привилегии на серверах</h1>
+  <p class="lead">Выберите привилегию и укажите свой Steam-аккаунт. Бот откроет приватный тикет в Discord,
+    где администратор согласует оплату и выдаст привилегию на сервере.</p>
+  <p class="note">Покупка привилегии не освобождает от правил. За нарушения она снимается без возврата.</p>
+</section>
+<div class="cards shop">{% set buy = True %}{% for item in items %}{% include "cs2/_item.html" %}{% endfor %}</div>
+{% endblock %}
