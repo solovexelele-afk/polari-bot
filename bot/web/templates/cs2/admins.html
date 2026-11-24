@@ -7,7 +7,7 @@
 <section class="block">
   <h2 class="role-title" style="--role: {{ g.color }}">{{ g.name }}</h2>
   <div class="people">
-    {% for m in g.members %}<div class="person"><img class="ava lg" src="{{ m.avatar }}" alt=""><span>{{ m.name }}</span></div>{% endfor %}
+    {% for m in g.members %}<div class="person"><img class="ava lg" src="{{ m.avatar|av }}" alt=""><span>{{ m.name }}</span></div>{% endfor %}
   </div>
 </section>
 {% else %}<p class="muted">Состав команды скоро появится.</p>{% endfor %}

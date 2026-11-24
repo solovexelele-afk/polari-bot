@@ -24,7 +24,7 @@ from aiohttp import web
 from markupsafe import Markup, escape
 
 from bot.data.blueprint import ROLES
-from bot.data.content import CS2_ITEMS, CURRENCY, SHOP_BY_ID, SHOP_ITEMS
+from bot.data.content import CURRENCY, SHOP_BY_ID, SHOP_ITEMS
 from bot.database.db import now_iso
 from bot.utils.helpers import parse_color
 from config import settings
@@ -39,6 +39,7 @@ SESSION_COOKIE = "polari_session"
 SESSION_TTL = 14 * 86400
 POST_COOLDOWN = 20
 DISCORD_API = "https://discord.com/api/v10"
+CDN = "https://cdn.discordapp.com/"
 
 
 def nl2br(text: str) -> Markup:
@@ -62,6 +63,9 @@ class Site:
                                       autoescape=jinja2.select_autoescape(["html"]))
         self.env.filters["nl2br"] = nl2br
         self.env.filters["date"] = lambda iso: (iso or "")[:16].replace("T", " ")
+        # Discord CDN в РФ заблокирован — аватарки отдаём через наш сервер
+        self.env.filters["av"] = lambda url: f"/img?u={quote(url, safe='')}" if url and url.startswith(CDN) else url
+        self._img_cache: dict[str, tuple[bytes, str]] = {}
 
     # ------------------------------------------------------------------ сессии (подписанная cookie)
     def _sign(self, payload: bytes) -> str:
@@ -240,8 +244,7 @@ class Site:
         threads = await self.bot.db.fetchall(
             "SELECT t.*, c.title AS cat_title, c.icon FROM forum_threads t JOIN forum_categories c ON c.id=t.category_id "
             "ORDER BY t.updated_at DESC LIMIT 5")
-        return await self.render(request, "cs2/home.html", news=await self.news_list(3), threads=threads,
-                                 items=CS2_ITEMS[:3])
+        return await self.render(request, "cs2/home.html", news=await self.news_list(3), threads=threads)
 
     async def cs2_forum(self, request: web.Request) -> web.Response:
         cats = await self.bot.db.fetchall(
@@ -340,9 +343,6 @@ class Site:
             await db.execute("UPDATE forum_threads SET replies=MAX(replies-1,0) WHERE id=?", (thread["id"],))
         raise web.HTTPFound(f"/cs2/forum/t/{thread['id']}")
 
-    async def cs2_shop(self, request: web.Request) -> web.Response:
-        return await self.render(request, "cs2/shop.html", items=CS2_ITEMS)
-
     async def cs2_news(self, request: web.Request) -> web.Response:
         return await self.render(request, "cs2/news.html", news=await self.news_list(50))
 
@@ -382,6 +382,23 @@ class Site:
                                                for m in people]})
         return await self.render(request, "cs2/admins.html", groups=groups)
 
+    async def image_proxy(self, request: web.Request) -> web.Response:
+        """Отдаёт аватарки Discord с нашего домена: у пользователей из РФ cdn.discordapp.com недоступен."""
+        url = request.query.get("u", "")
+        if not url.startswith(CDN) or ".." in url:
+            raise web.HTTPNotFound()
+        cached = self._img_cache.get(url)
+        if cached is None:
+            async with aiohttp.ClientSession() as http:
+                async with http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        raise web.HTTPNotFound()
+                    cached = (await resp.read(), resp.content_type or "image/png")
+            if len(self._img_cache) > 300:
+                self._img_cache.pop(next(iter(self._img_cache)))
+            self._img_cache[url] = cached
+        return web.Response(body=cached[0], content_type=cached[1], headers={"Cache-Control": "public, max-age=86400"})
+
     # ------------------------------------------------------------------ ошибки
     @web.middleware
     async def errors(self, request: web.Request, handler):
@@ -417,11 +434,10 @@ class Site:
         r.add_post("/cs2/forum/t/{tid:\\d+}/mod", self.cs2_moderate)
         r.add_get("/cs2/forum/{slug}", self.cs2_category)
         r.add_post("/cs2/forum/{slug}/new", self.cs2_new_thread)
-        r.add_get("/cs2/shop", self.cs2_shop)
-        r.add_post("/cs2/shop/buy", self.buy)
         r.add_get("/cs2/news", self.cs2_news)
         r.add_post("/cs2/news", self.cs2_news_post)
         r.add_get("/cs2/info", self.cs2_info)
+        r.add_get("/img", self.image_proxy)
         r.add_get("/cs2/admins", self.cs2_admins)
         r.add_static("/static", WEB_DIR / "static")
         r.add_static("/banners", BANNERS)

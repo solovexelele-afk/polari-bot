@@ -6,7 +6,7 @@
 <div class="forum">
   {% for t in threads %}
   <a class="forum-row" href="/cs2/forum/t/{{ t.id }}">
-    <img class="ava" src="{{ t.author_avatar }}" alt="">
+    <img class="ava" src="{{ t.author_avatar|av }}" alt="">
     <span class="forum-main"><b>{% if t.pinned %}📌 {% endif %}{% if t.locked %}🔒 {% endif %}{{ t.title }}</b>
       <small>{{ t.author_name }} · {{ t.created_at|date }}</small></span>
     <span class="forum-count"><b>{{ t.replies }}</b><small>ответов</small></span>

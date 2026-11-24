@@ -4,9 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}POLARI CS 2{% endblock %}</title>
-<meta name="description" content="Серверы Counter-Strike 2 проекта POLARI: форум, привилегии, новости и администрация.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta name="description" content="Серверы Counter-Strike 2 проекта POLARI: форум, новости, информация и администрация.">
+<link rel="stylesheet" href="/static/fonts.css">
 <link rel="stylesheet" href="/static/site.css">
 </head>
 <body class="cs2">
@@ -16,14 +15,13 @@
   <nav class="nav">
     <a href="/cs2" class="{{ 'on' if path == '/cs2' }}">Главная</a>
     <a href="/cs2/forum" class="{{ 'on' if path.startswith('/cs2/forum') }}">Форум</a>
-    <a href="/cs2/shop" class="{{ 'on' if path.startswith('/cs2/shop') }}">Магазин</a>
     <a href="/cs2/news" class="{{ 'on' if path.startswith('/cs2/news') }}">Новости</a>
     <a href="/cs2/info" class="{{ 'on' if path.startswith('/cs2/info') }}">Информация</a>
     <a href="/cs2/admins" class="{{ 'on' if path.startswith('/cs2/admins') }}">Администрация</a>
   </nav>
   <div class="account">
     {% if user %}
-      <img src="{{ user.avatar }}" alt=""><span>{{ user.name }}</span><a href="/logout" class="ghost sm">Выйти</a>
+      <img src="{{ user.avatar|av }}" alt=""><span>{{ user.name }}</span><a href="/logout" class="ghost sm">Выйти</a>
     {% else %}
       <a href="/login?next={{ path }}" class="btn sm">Войти через Discord</a>
     {% endif %}

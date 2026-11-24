@@ -11,7 +11,7 @@ body.polari {
 body.cs2 {
   --bg: #0c0d10; --bg2: #14161b; --card: #171a20; --line: #262a33; --text: #eceef2; --muted: #9a9fab;
   --accent: #f5a524; --accent2: #ffcf70; --accent-ink: #1a1102;
-  --display: "Russo One", sans-serif;
+  --display: "Exo 2", sans-serif;
   --radius: 6px;
   background: linear-gradient(180deg, #12141a 0, var(--bg) 420px);
 }
@@ -26,6 +26,8 @@ h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.15; m
 h1 { font-size: clamp(30px, 5vw, 54px); }
 h2 { font-size: clamp(20px, 2.4vw, 26px); }
 h3 { font-size: 18px; }
+body.cs2 h1, body.cs2 h2 { font-weight: 800; font-style: italic; text-transform: uppercase; letter-spacing: .01em; }
+body.cs2 h3, body.cs2 .brand { font-weight: 800; }
 p { margin: 0 0 1em; }
 code, kbd { font-family: ui-monospace, Consolas, monospace; background: var(--bg2); border: 1px solid var(--line);
   padding: 1px 6px; border-radius: 6px; font-size: .9em; }
@@ -110,7 +112,7 @@ body.cs2 input, body.cs2 textarea { border-radius: 4px; }
   background: linear-gradient(120deg, #17140e, #241b0b 60%, #3a2a0d); }
 .cs2-teaser:hover { text-decoration: none; transform: translateY(-2px); }
 .cs2-teaser .eyebrow { color: #f5a524; }
-.cs2-teaser h2 { font-family: "Russo One", sans-serif; }
+.cs2-teaser h2 { font-family: "Exo 2", sans-serif; font-weight: 800; font-style: italic; }
 .cs2-teaser p { color: #c9bfa9; margin: 0; }
 .arrow { font-size: 40px; color: #f5a524; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }

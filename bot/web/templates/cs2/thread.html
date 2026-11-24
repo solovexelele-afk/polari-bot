@@ -14,7 +14,7 @@
 <div class="posts">
   {% for p in posts %}
   <article class="card post"{% if loop.last %} id="last"{% endif %}>
-    <aside><img class="ava" src="{{ p.author_avatar }}" alt=""><b>{{ p.author_name }}</b></aside>
+    <aside><img class="ava" src="{{ p.author_avatar|av }}" alt=""><b>{{ p.author_name }}</b></aside>
     <div><time>{{ p.created_at|date }}</time><div class="post-body">{{ p.content|nl2br }}</div>
       {% if user and user.staff and not loop.first %}
       <form method="post" action="/cs2/forum/t/{{ thread.id }}/mod"><input type="hidden" name="csrf" value="{{ user.csrf }}">
